@@ -602,7 +602,7 @@ body {
 }
 .page {
   height: 100vh;
-  padding: var(--space-2);
+  padding: var(--space-3);
 }
 .flyout-card {
   position: relative;
@@ -648,8 +648,8 @@ body {
 .head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: var(--space-2) var(--space-4) var(--space-1);
+  gap: var(--space-3);
+  padding: var(--space-3) 18px var(--space-2);
   -webkit-app-region: drag;
 }
 .brand-icon {
@@ -725,7 +725,7 @@ body {
   align-items: center;
   gap: var(--space-3);
   margin: 0;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) 18px;
   border-bottom: var(--hairline);
 }
 .status .dot {
@@ -791,12 +791,15 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-1) var(--space-4) var(--space-2);
+  padding: var(--space-2) 18px var(--space-4);
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
 }
 .group {
   margin-bottom: var(--space-5);
+}
+.group:first-child {
+  margin-top: var(--space-1);
 }
 .group-title {
   display: flex;
@@ -1022,7 +1025,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4) var(--space-3);
+  padding: var(--space-3) 18px var(--space-4);
   border-top: var(--hairline);
 }
 .foot button {
