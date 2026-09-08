@@ -356,6 +356,11 @@ function onEscape(e: KeyboardEvent) {
   }
 }
 
+/** 双击头部是 Windows 最大化惯例；悬浮窗不应放大，兜底还原 */
+function preventMaximize() {
+  appWindow.unmaximize().catch(() => { });
+}
+
 onMounted(() => {
   getSettings();
   initRuntimeStatus();
@@ -378,15 +383,12 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
-    <div
-      class="flyout-card"
-      :class="{
-        'flyout-hidden': !shown && !closing,
-        'flyout-in': entering,
-        'flyout-out': closing,
-      }"
-    >
-      <header class="head" data-tauri-drag-region>
+    <div class="flyout-card" :class="{
+      'flyout-hidden': !shown && !closing,
+      'flyout-in': entering,
+      'flyout-out': closing,
+    }">
+      <header class="head" data-tauri-drag-region @dblclick.prevent="preventMaximize">
         <template v-if="page === 'home'">
           <img class="brand-logo" src="/yulink.png" alt="" draggable="false" />
           <div class="title-box" data-tauri-drag-region>
@@ -396,7 +398,8 @@ onUnmounted(() => {
           <button class="icon-btn" type="button" title="设置" @click="page = 'settings'">
             <svg viewBox="0 0 24 24" width="15" height="15">
               <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.09a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" />
+              <path
+                d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.09a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" />
             </svg>
           </button>
         </template>
@@ -419,13 +422,7 @@ onUnmounted(() => {
           <strong>{{ statusView.text }}</strong>
           <small>动态密码 {{ smsStatusText }}</small>
         </div>
-        <button
-          v-if="page === 'home'"
-          class="login-chip"
-          type="button"
-          :disabled="busy || awayMode"
-          @click="loginNow"
-        >
+        <button v-if="page === 'home'" class="login-chip" type="button" :disabled="busy || awayMode" @click="loginNow">
           <svg viewBox="0 0 24 24" width="12" height="12">
             <path d="M8 5.5v13l10-6.5z" />
           </svg>
@@ -444,12 +441,8 @@ onUnmounted(() => {
             <label class="row">
               <span>密码</span>
               <span class="pwd-wrap">
-                <input
-                  v-model="password"
-                  :type="showPassword ? 'text' : 'password'"
-                  autocomplete="new-password"
-                  placeholder="请输入密码"
-                />
+                <input v-model="password" :type="showPassword ? 'text' : 'password'" autocomplete="new-password"
+                  placeholder="请输入密码" />
                 <button class="eye" type="button" @click="showPassword = !showPassword">
                   {{ showPassword ? "隐藏" : "显示" }}
                 </button>
@@ -464,15 +457,8 @@ onUnmounted(() => {
             <button class="text-btn" type="button" @click="clearSms">清除</button>
           </div>
           <div class="field-card">
-            <input
-              v-model="smsCode"
-              class="sms-input"
-              maxlength="8"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="电信短信下发的动态密码"
-              @input="onSmsInput"
-            />
+            <input v-model="smsCode" class="sms-input" maxlength="8" autocomplete="off" spellcheck="false"
+              placeholder="电信短信下发的动态密码" @input="onSmsInput" />
             <div class="expire-row">
               <span>有效期</span>
               <span class="select">
@@ -543,22 +529,10 @@ onUnmounted(() => {
 
       <footer class="foot">
         <span class="spacer"></span>
-        <button
-          v-if="page === 'settings'"
-          class="ghost"
-          type="button"
-          :disabled="busy"
-          @click="page = 'home'"
-        >
+        <button v-if="page === 'settings'" class="ghost" type="button" :disabled="busy" @click="page = 'home'">
           返回
         </button>
-        <button
-          v-if="page === 'settings'"
-          class="primary"
-          type="button"
-          :disabled="busy"
-          @click="saveSettings"
-        >
+        <button v-if="page === 'settings'" class="primary" type="button" :disabled="busy" @click="saveSettings">
           {{ busy ? "保存中…" : "保存设置" }}
         </button>
         <button v-else class="primary" type="button" :disabled="busy" @click="saveCredentials">
@@ -579,6 +553,7 @@ onUnmounted(() => {
   -webkit-user-select: none;
   user-select: none;
 }
+
 html,
 body,
 #app {
@@ -587,6 +562,7 @@ body,
   background: transparent;
   overflow: hidden;
 }
+
 body {
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   color: #1b1b1b;
@@ -600,10 +576,12 @@ body {
   --radius-md: 12px;
   --hairline: 1px solid rgba(0, 0, 0, 0.07);
 }
+
 .page {
   height: 100vh;
   padding: var(--space-3);
 }
+
 .flyout-card {
   position: relative;
   height: 100%;
@@ -615,36 +593,44 @@ body {
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
   overflow: hidden;
 }
+
 .flyout-in {
   animation: flyout-in 0.22s cubic-bezier(0.16, 0.84, 0.32, 1);
 }
+
 .flyout-out {
   animation: flyout-out 0.18s cubic-bezier(0.7, 0, 0.84, 0) forwards;
 }
+
 .flyout-hidden {
   opacity: 0;
   transform: translateX(46px);
 }
+
 @keyframes flyout-in {
   from {
     transform: translateX(46px);
     opacity: 0;
   }
+
   to {
     transform: translateX(0);
     opacity: 1;
   }
 }
+
 @keyframes flyout-out {
   from {
     transform: translateX(0);
     opacity: 1;
   }
+
   to {
     transform: translateX(60px);
     opacity: 0;
   }
 }
+
 .head {
   display: flex;
   align-items: center;
@@ -652,6 +638,7 @@ body {
   padding: var(--space-4) var(--space-5) var(--space-2);
   -webkit-app-region: drag;
 }
+
 .brand-icon {
   width: 32px;
   height: 32px;
@@ -663,6 +650,7 @@ body {
   color: #fff;
   box-shadow: 0 3px 8px rgba(29, 95, 214, 0.3);
 }
+
 .brand-logo {
   width: 32px;
   height: 32px;
@@ -672,6 +660,7 @@ body {
   background: #ffffff;
   border: 1px solid rgba(0, 0, 0, 0.06);
 }
+
 .brand-icon svg,
 .login-chip svg {
   fill: currentColor;
@@ -679,16 +668,19 @@ body {
   stroke-width: 1.5;
   stroke-linejoin: round;
 }
+
 .title-box {
   flex: 1;
   min-width: 0;
   -webkit-app-region: drag;
 }
+
 .title-box h1 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
 }
+
 .title-box p {
   margin: 1px 0 0;
   font-size: 10.5px;
@@ -697,6 +689,7 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .icon-btn {
   width: 30px;
   height: 30px;
@@ -710,6 +703,7 @@ body {
   justify-content: center;
   cursor: pointer;
 }
+
 .icon-btn svg {
   fill: none;
   stroke: currentColor;
@@ -717,9 +711,11 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
 .icon-btn:hover {
   background: rgba(0, 0, 0, 0.07);
 }
+
 .status {
   display: flex;
   align-items: center;
@@ -727,6 +723,7 @@ body {
   margin: 0;
   padding: var(--space-3) var(--space-6);
 }
+
 .status .dot {
   width: 9px;
   height: 9px;
@@ -734,10 +731,12 @@ body {
   background: #9aa0a8;
   flex: 0 0 auto;
 }
+
 .status div {
   flex: 1;
   min-width: 0;
 }
+
 .status strong,
 .status small {
   display: block;
@@ -745,27 +744,33 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .status strong {
   font-size: 13px;
   font-weight: 600;
 }
+
 .status small {
   margin-top: 1px;
   font-size: 11px;
   color: #7a7f89;
 }
+
 .status.ok .dot {
   background: #1fa155;
   box-shadow: 0 0 0 4px rgba(31, 161, 85, 0.15);
 }
+
 .status.warn .dot {
   background: #d08b00;
   box-shadow: 0 0 0 4px rgba(208, 139, 0, 0.15);
 }
+
 .status.error .dot {
   background: #d83b3b;
   box-shadow: 0 0 0 4px rgba(216, 59, 59, 0.15);
 }
+
 .login-chip {
   flex: 0 0 auto;
   display: inline-flex;
@@ -779,13 +784,16 @@ body {
   font: 600 12px "Segoe UI Variable Text", "Segoe UI", sans-serif;
   cursor: pointer;
 }
+
 .login-chip:hover:not(:disabled) {
   background: #1756c0;
 }
+
 .login-chip:disabled {
   opacity: 0.55;
   cursor: default;
 }
+
 .body {
   flex: 1;
   min-height: 0;
@@ -794,12 +802,15 @@ body {
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
 }
+
 .group {
   margin-bottom: var(--space-5);
 }
+
 .group:first-child {
   margin-top: var(--space-1);
 }
+
 .group-title {
   display: flex;
   align-items: center;
@@ -809,6 +820,7 @@ body {
   color: #71767e;
   margin: var(--space-2) 0 var(--space-1);
 }
+
 .text-btn {
   border: none;
   background: none;
@@ -819,9 +831,11 @@ body {
   padding: 2px 4px;
   border-radius: 5px;
 }
+
 .text-btn:hover {
   background: rgba(29, 100, 216, 0.08);
 }
+
 .field-card,
 .switch-card {
   background: transparent;
@@ -829,6 +843,7 @@ body {
   border-radius: 0;
   padding: 0;
 }
+
 .switch-card {
   display: flex;
   align-items: center;
@@ -838,20 +853,24 @@ body {
   cursor: pointer;
   border-bottom: var(--hairline);
 }
+
 .switch-card strong,
 .switch-card small,
 .danger-card strong {
   display: block;
 }
+
 .switch-card strong,
 .danger-card strong {
   font-size: 13px;
 }
+
 .switch-card small {
   margin-top: 1px;
   font-size: 11px;
   color: #7a7f89;
 }
+
 .row {
   display: flex;
   align-items: center;
@@ -859,14 +878,17 @@ body {
   min-height: 44px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
+
 .row:last-child {
   border-bottom: none;
 }
-.row > span:first-child {
+
+.row>span:first-child {
   flex: 0 0 74px;
   font-size: 12px;
   color: #565b64;
 }
+
 .row input,
 .sms-input,
 .custom-row input {
@@ -879,19 +901,23 @@ body {
   outline: none;
   text-align: right;
 }
+
 .url-row input {
   font-size: 12px;
   color: #333;
 }
+
 .pwd-wrap {
   flex: 1;
   display: flex;
   align-items: center;
   gap: 4px;
 }
+
 .pwd-wrap input {
   text-align: left;
 }
+
 .eye {
   border: none;
   background: transparent;
@@ -901,14 +927,17 @@ body {
   padding: 3px 5px;
   border-radius: 5px;
 }
+
 .eye:hover {
   background: rgba(29, 100, 216, 0.08);
 }
+
 .sms-input {
   width: 100%;
   text-align: left;
   padding: 9px 0 4px;
 }
+
 .expire-row {
   display: flex;
   align-items: center;
@@ -917,11 +946,13 @@ body {
   font-size: 12px;
   color: #565b64;
 }
+
 .select {
   position: relative;
   display: inline-flex;
   align-items: center;
 }
+
 .select select {
   appearance: none;
   border: 1px solid rgba(0, 0, 0, 0.08);
@@ -933,9 +964,11 @@ body {
   cursor: pointer;
   outline: none;
 }
+
 .select select:focus {
   border-color: #1d64d8;
 }
+
 .select svg {
   position: absolute;
   right: 8px;
@@ -946,6 +979,7 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
 .custom-row {
   display: flex;
   align-items: center;
@@ -954,6 +988,7 @@ body {
   font-size: 11px;
   color: #71767e;
 }
+
 .custom-row input {
   flex: 0 0 90px;
   border: 1px solid rgba(0, 0, 0, 0.08);
@@ -962,12 +997,14 @@ body {
   padding: 5px 8px;
   text-align: left;
 }
+
 .hint {
   margin: 0 0 9px;
   font-size: 10.5px;
   color: #8a8f98;
   line-height: 1.5;
 }
+
 .switch {
   position: relative;
   width: 40px;
@@ -977,6 +1014,7 @@ body {
   transition: background 0.15s;
   flex: 0 0 auto;
 }
+
 .switch i {
   position: absolute;
   top: 2px;
@@ -988,12 +1026,15 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   transition: left 0.15s;
 }
+
 .switch.on {
   background: #1d64d8;
 }
+
 .switch.on i {
   left: 22px;
 }
+
 .danger-card {
   display: flex;
   align-items: center;
@@ -1004,6 +1045,7 @@ body {
   border-radius: 0;
   padding: var(--space-3) 0;
 }
+
 .danger-btn {
   flex: 0 0 auto;
   border: 1px solid rgba(176, 50, 47, 0.35);
@@ -1014,18 +1056,22 @@ body {
   font: 600 11px "Segoe UI Variable Text", "Segoe UI", sans-serif;
   cursor: pointer;
 }
+
 .danger-btn:hover:not(:disabled) {
   background: rgba(176, 50, 47, 0.07);
 }
+
 .danger-btn:disabled {
   opacity: 0.55;
 }
+
 .foot {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-6) var(--space-5);
 }
+
 .foot button {
   border: none;
   border-radius: 8px;
@@ -1033,26 +1079,33 @@ body {
   font: 600 12px "Segoe UI Variable Text", "Segoe UI", sans-serif;
   cursor: pointer;
 }
+
 .foot button:disabled {
   opacity: 0.55;
 }
+
 .spacer {
   flex: 1;
 }
+
 .ghost {
   background: rgba(0, 0, 0, 0.07);
   color: #1b1b1b;
 }
+
 .ghost:hover {
   background: rgba(0, 0, 0, 0.11);
 }
+
 .primary {
   background: #1d64d8;
   color: #fff;
 }
+
 .primary:hover {
   background: #1756c0;
 }
+
 .toast {
   position: fixed;
   left: 50%;
@@ -1068,29 +1121,36 @@ body {
   z-index: 99;
   pointer-events: none;
 }
+
 .toast.success {
   background: #147a3e;
 }
+
 .toast.error {
   background: #b0322f;
 }
+
 .toast-enter-active,
 .toast-leave-active {
   transition: opacity 0.18s, transform 0.18s;
 }
+
 .toast-enter-from,
 .toast-leave-to {
   opacity: 0;
   transform: translate(-50%, 6px);
 }
+
 @media (prefers-color-scheme: dark) {
   body {
     color: #e9eaee;
   }
+
   .flyout-card {
     background: #202124;
     border-color: rgba(255, 255, 255, 0.1);
   }
+
   .status,
   .field-card,
   .switch-card,
@@ -1098,7 +1158,8 @@ body {
     background: transparent;
     border-color: rgba(255, 255, 255, 0.07);
   }
-  .row > span:first-child,
+
+  .row>span:first-child,
   .group-title,
   .expire-row,
   .hint,
@@ -1107,20 +1168,24 @@ body {
   .switch-card small {
     color: #a8adb8;
   }
+
   .row input,
   .sms-input,
   .custom-row input {
     color: #e9eaee;
   }
+
   .select select,
   .custom-row input {
     background: rgba(255, 255, 255, 0.09);
     color: #e9eaee;
   }
+
   .ghost {
     background: rgba(255, 255, 255, 0.1);
     color: #e9eaee;
   }
+
   .icon-btn:hover,
   .eye:hover,
   .text-btn:hover {
