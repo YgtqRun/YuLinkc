@@ -104,40 +104,61 @@ pub fn update_tray_status(app: &AppHandle<Wry>, kind: &str) {
         "network-down" => (120, 125, 132, "网络未就绪"),
         _ => (154, 160, 168, "检测中"),
     };
-    let _ = tray.set_icon(Some(status_dot_icon(r, g, b)));
+    let _ = tray.set_icon(status_overlay_icon(app, r, g, b));
     let _ = tray.set_tooltip(Some(format!("御连 YuLink - {label}")));
 }
 
-/// 运行时生成 32x32 状态圆点图标（外白圈 + 状态色）。
-fn status_dot_icon(r: u8, g: u8, b: u8) -> tauri::image::Image<'static> {
-    const SIZE: u32 = 32;
-    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
-    let center = SIZE as f64 / 2.0 - 0.5;
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let dx = x as f64 - center;
-            let dy = y as f64 - center;
+/// 在原应用图标右下角叠加状态点（白圈 + 状态色），找不到原图标时返回 None 不改动。
+fn status_overlay_icon(
+    app: &AppHandle<Wry>,
+    r: u8,
+    g: u8,
+    b: u8,
+) -> Option<tauri::image::Image<'static>> {
+    let base = app.default_window_icon()?;
+    let width = base.width();
+    let height = base.height();
+    let pixels = base.rgba();
+    if pixels.len() != (width * height * 4) as usize {
+        return None;
+    }
+
+    let mut rgba = pixels.to_vec();
+    let size = width.min(height) as f64;
+    let dot_r = (size * 0.18).round().max(4.0);
+    let cx = width as f64 - 1.0 - dot_r * 0.85;
+    let cy = height as f64 - 1.0 - dot_r * 0.85;
+    let inner_r = dot_r * 0.62;
+
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f64 - cx;
+            let dy = y as f64 - cy;
             let d = (dx * dx + dy * dy).sqrt();
-            let (alpha, cr, cg, cb) = if d <= 9.0 {
-                (1.0, r as f64, g as f64, b as f64)
-            } else if d <= 11.6 {
-                (1.0, 255.0, 255.0, 255.0)
-            } else if d < 12.6 {
-                let a = 1.0 - (d - 11.6) / 1.0;
-                (a, 255.0, 255.0, 255.0)
-            } else {
-                (0.0, 0.0, 0.0, 0.0)
-            };
-            if alpha > 0.0 {
-                let idx = ((y * SIZE + x) * 4) as usize;
-                rgba[idx] = cr as u8;
-                rgba[idx + 1] = cg as u8;
-                rgba[idx + 2] = cb as u8;
-                rgba[idx + 3] = (alpha * 255.0).round() as u8;
+            if d > dot_r {
+                continue;
             }
+            let (cr, cg, cb, alpha) = if d <= inner_r {
+                (r, g, b, 255u8)
+            } else if d <= dot_r {
+                // 白圈边缘做 1px 抗锯齿
+                let a = if d > dot_r - 1.0 {
+                    (((dot_r - d) * 255.0).round() as u8).min(255)
+                } else {
+                    255
+                };
+                (255, 255, 255, a)
+            } else {
+                continue;
+            };
+            let idx = ((y * width + x) * 4) as usize;
+            rgba[idx] = cr;
+            rgba[idx + 1] = cg;
+            rgba[idx + 2] = cb;
+            rgba[idx + 3] = alpha;
         }
     }
-    tauri::image::Image::new_owned(rgba, SIZE, SIZE)
+    Some(tauri::image::Image::new_owned(rgba, width, height))
 }
 
 /// 显示并聚焦设置主窗口（已隐藏时重新显示），位置先贴到屏幕右下角。
