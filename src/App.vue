@@ -649,7 +649,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) 18px var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-2);
   -webkit-app-region: drag;
 }
 .brand-icon {
@@ -725,7 +725,7 @@ body {
   align-items: center;
   gap: var(--space-3);
   margin: 0;
-  padding: var(--space-3) 18px;
+  padding: var(--space-3) var(--space-6);
 }
 .status .dot {
   width: 9px;
@@ -790,7 +790,7 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-2) 18px var(--space-4);
+  padding: var(--space-2) var(--space-6) var(--space-6);
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
 }
@@ -1024,7 +1024,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) 18px var(--space-4);
+  padding: var(--space-3) var(--space-6) var(--space-5);
 }
 .foot button {
   border: none;
