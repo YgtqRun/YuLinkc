@@ -6,6 +6,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::scheduler::Scheduler;
 use crate::store::{ConfigPaths, ConfigState};
 
 pub const MAIN_WINDOW: &str = "main";
@@ -44,8 +45,12 @@ pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_settings(app),
             "login" => {
-                // M3 集成登录状态机后，这里触发真实登录流程
-                warn!("立即登录：待 M3 登录状态机接入");
+                if let Some(sched) = app.try_state::<Scheduler>() {
+                    sched.request_login();
+                    info!("托盘：已触发立即登录");
+                } else {
+                    warn!("调度器未就绪，无法触发立即登录");
+                }
                 show_settings(app);
             }
             "autostart" => toggle_autostart(app),

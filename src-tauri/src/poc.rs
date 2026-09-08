@@ -19,7 +19,9 @@ use std::{
 };
 
 use crate::bridge::{read_request_head, spawn_beacon_listener, BeaconEvent};
-use crate::auth_window::{create_auth_window, AuthWindowVisibility};
+use crate::auth_window::{
+    cleanup_auth_windows, create_auth_window, destroy_auth_window, AuthWindowVisibility,
+};
 use tauri::{AppHandle, Manager};
 
 const WIRELESS_HTML: &str = include_str!("../../mock/wireless.html");
@@ -75,42 +77,6 @@ fn write_response(
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(body)
-}
-
-// ===================== 认证窗口 =====================
-// 窗口创建与显示策略统一走 auth_window::create_auth_window：
-// debug 默认屏幕内显示、release 默认屏幕外隐藏，可用 YULINK_AUTH_VISIBLE 覆盖。
-// 此模块只负责 POC 编排与窗口销毁/清理。
-
-fn destroy_auth_window(app: &AppHandle, label: &str) {
-    let app2 = app.clone();
-    let label_owned = label.to_string();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(w) = app2.get_webview_window(&label_owned) {
-            let _ = w.destroy();
-        }
-    });
-    // 给 WebView2 一点时间完成销毁，避免立即用同 label 重建
-    thread::sleep(Duration::from_millis(800));
-}
-
-/// 清理所有残留的 auth-* 窗口（上一轮失败时可能未销毁干净）。
-fn cleanup_auth_windows(app: &AppHandle) {
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let labels: Vec<String> = app2
-            .webview_windows()
-            .keys()
-            .filter(|l| l.starts_with("auth-"))
-            .cloned()
-            .collect();
-        for label in labels {
-            if let Some(w) = app2.get_webview_window(&label) {
-                let _ = w.destroy();
-            }
-        }
-    });
-    thread::sleep(Duration::from_millis(1000));
 }
 
 // ===================== POC 主流程 =====================
@@ -243,7 +209,7 @@ pub fn run_poc(app: &AppHandle) -> Result<(), String> {
         }
     }
 
-    cleanup_auth_windows(app);
+    cleanup_auth_windows(app, "auth-");
     println!("[POC] ===== 汇总：{passed} 通过，{failed} 失败 =====");
     if failed == 0 {
         Ok(())
@@ -261,7 +227,7 @@ fn run_single(
     run_id: u64,
     visibility: AuthWindowVisibility,
 ) -> Result<String, String> {
-    cleanup_auth_windows(app);
+    cleanup_auth_windows(app, "auth-");
     let label = format!("auth-{run_id}");
     let url = format!("{base_url}{}", scenario.path);
     println!("[POC] run#{run_id} 创建认证窗口({label}) -> {url}");

@@ -30,6 +30,9 @@ time = { version = "0.3", features = ["formatting"] }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
 ] }
 
 

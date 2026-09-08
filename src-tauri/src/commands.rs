@@ -7,6 +7,8 @@ use tauri::{AppHandle, State};
 use crate::store::{
     AppConfig, ConfigPaths, ConfigState, PERMANENT_HOURS,
 };
+use crate::scheduler::Scheduler;
+use crate::state::{RuntimeState, StatusPayload};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -215,22 +217,20 @@ pub fn set_autostart(
     })
 }
 
-/// M2 占位：校验配置是否就绪；M3 接入真正的登录状态机后替换实现。
+/// 触发一次即时登录（由调度器执行完整认证流程）。
 #[tauri::command]
-pub fn login_now(config_state: State<'_, ConfigState>) -> Result<CommandResult, String> {
-    let now = now_ms();
-    let cfg = config_state
-        .0
-        .lock()
-        .map_err(|_| "配置状态锁不可用".to_string())?;
-    if cfg.account.is_none() {
-        return Err("请先填写校园网账号和密码".into());
-    }
-    if !cfg.sms_valid_at(now) {
-        return Err("动态密码缺失或已过期，请填写后重试".into());
-    }
+pub fn login_now(scheduler: State<'_, Scheduler>) -> Result<CommandResult, String> {
+    scheduler.request_login();
     Ok(CommandResult {
         ok: true,
-        message: "配置已就绪：登录引擎将在下一步（M3）接入".into(),
+        message: "已触发自动登录，请稍候查看状态".into(),
+    })
+}
+
+#[tauri::command]
+pub fn get_runtime_status(state: State<'_, RuntimeState>) -> StatusPayload {
+    state.current().unwrap_or(StatusPayload {
+        kind: "checking".into(),
+        text: "正在检测网络…".into(),
     })
 }

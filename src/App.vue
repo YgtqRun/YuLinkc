@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 interface StatusView {
   kind: string;
@@ -69,6 +70,7 @@ const toast = ref<{ text: string; type: string } | null>(null);
 const clearArmed = ref(false);
 let toastTimer: number | undefined;
 let clearTimer: number | undefined;
+let unlistenStatus: UnlistenFn | undefined;
 
 const expireLabel = computed(() => {
   const v = expireChoice.value;
@@ -123,6 +125,33 @@ async function getSettings() {
     applyView(v);
   } catch (e) {
     showToast(String(e), "error");
+  }
+}
+
+async function initRuntimeStatus() {
+  try {
+    const st = await invoke<StatusView>("get_runtime_status");
+    statusView.value = st;
+  } catch {
+    // 调度器尚未广播时忽略，等待事件
+  }
+  try {
+    unlistenStatus = await listen<StatusView>("yulink://status", (e) => {
+      statusView.value = e.payload;
+      if (e.payload.kind === "needs-sms") {
+        showToast(e.payload.text || "动态密码缺失或已过期", "error");
+        // 同步刷新表单（如调度器已作废动态密码）
+        getSettings();
+      } else if (e.payload.kind === "failed") {
+        showToast(e.payload.text || "登录失败", "error");
+      } else if (e.payload.kind === "connected") {
+        showToast(e.payload.text || "已连接", "success");
+      } else if (e.payload.kind === "logging-in") {
+        showToast(e.payload.text || "正在登录", "info");
+      }
+    });
+  } catch {
+    // 事件通道不可用时仅保留静态状态
   }
 }
 
@@ -270,10 +299,12 @@ function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   getSettings();
+  initRuntimeStatus();
   window.addEventListener("keydown", onKeydown);
 });
 
 onUnmounted(() => {
+  unlistenStatus?.();
   window.removeEventListener("keydown", onKeydown);
   if (toastTimer) window.clearTimeout(toastTimer);
   if (clearTimer) window.clearTimeout(clearTimer);

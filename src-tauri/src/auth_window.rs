@@ -8,7 +8,7 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
-use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthWindowVisibility {
@@ -101,4 +101,36 @@ pub fn create_auth_window(
 
     rx.recv_timeout(Duration::from_secs(10))
         .map_err(|e| format!("等待窗口创建超时: {e}"))?
+}
+
+pub fn destroy_auth_window(app: &AppHandle, label: &str) {
+    let app2 = app.clone();
+    let label_owned = label.to_string();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = app2.get_webview_window(&label_owned) {
+            let _ = w.destroy();
+        }
+    });
+    // 给 WebView2 一点时间完成销毁，避免立即用同 label 重建
+    std::thread::sleep(Duration::from_millis(800));
+}
+
+/// 清理所有以指定前缀命名的认证窗口（上一轮失败时可能未销毁干净）。
+pub fn cleanup_auth_windows(app: &AppHandle, prefix: &str) {
+    let app2 = app.clone();
+    let prefix_owned = prefix.to_string();
+    let _ = app.run_on_main_thread(move || {
+        let labels: Vec<String> = app2
+            .webview_windows()
+            .keys()
+            .filter(|l| l.starts_with(&prefix_owned))
+            .cloned()
+            .collect();
+        for label in labels {
+            if let Some(w) = app2.get_webview_window(&label) {
+                let _ = w.destroy();
+            }
+        }
+    });
+    std::thread::sleep(Duration::from_millis(1000));
 }
