@@ -77,7 +77,6 @@ const closing = ref(false);
 let toastTimer: number | undefined;
 let clearTimer: number | undefined;
 let unlistenStatus: UnlistenFn | undefined;
-let unlistenFocus: UnlistenFn | undefined;
 let enterTimer: number | undefined;
 let exitTimer: number | undefined;
 
@@ -103,8 +102,10 @@ async function playExit() {
   if (exitTimer) window.clearTimeout(exitTimer);
   exitTimer = window.setTimeout(async () => {
     closing.value = false;
-    await appWindow.hide();
-  }, 180);
+    await appWindow.hide().catch(() => {
+      // 极少数情况下 hide 被拒绝时忽略（Rust 侧也会兜底隐藏）
+    });
+  }, 220);
 }
 
 const statusClass = computed(() => {
@@ -356,17 +357,9 @@ onMounted(() => {
   getSettings();
   initRuntimeStatus();
   window.addEventListener("keydown", onEscape);
-  // 每次窗口被托盘唤起获得焦点时，重播从右侧滑入动画
-  appWindow
-    .onFocusChanged(({ payload }) => {
-      if (payload && !closing.value) playEnter();
-    })
-    .then((fn) => {
-      unlistenFocus = fn;
-    })
-    .catch(() => {
-      // 焦点事件不可用时忽略
-    });
+  // 供 Rust 侧在窗口稳定显示后调用：__yulinkEnter / __yulinkExit
+  (window as unknown as Record<string, unknown>).__yulinkEnter = playEnter;
+  (window as unknown as Record<string, unknown>).__yulinkExit = playExit;
 });
 
 onUnmounted(() => {
@@ -376,7 +369,6 @@ onUnmounted(() => {
   if (clearTimer) window.clearTimeout(clearTimer);
   if (enterTimer) window.clearTimeout(enterTimer);
   if (exitTimer) window.clearTimeout(exitTimer);
-  unlistenFocus?.();
 });
 </script>
 

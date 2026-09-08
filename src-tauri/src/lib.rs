@@ -53,7 +53,7 @@ pub fn run() {
                         .map(|p| p.kind == "logging-in")
                         .unwrap_or(false);
                     if !logging_in {
-                        let _ = window.hide();
+                        tray::hide_settings(window.app_handle());
                     }
                 }
             }

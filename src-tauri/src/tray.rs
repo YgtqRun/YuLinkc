@@ -1,5 +1,9 @@
 //! 系统托盘：左键打开设置窗口，右键菜单提供 打开设置 / 立即登录 / 开机自启 / 退出。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
+
 use log::{info, warn};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -11,6 +15,11 @@ use crate::store::{ConfigPaths, ConfigState};
 
 pub const MAIN_WINDOW: &str = "main";
 pub const TRAY_ID: &str = "main-tray";
+const ENTER_DELAY_MS: u64 = 80;
+const EXIT_WAIT_MS: u64 = 230;
+
+/// 退出动画进行中标记，避免焦点丢失与托盘点击重复触发
+static EXIT_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// 需要动态改文案的菜单项句柄。
 pub struct TrayHandles {
@@ -76,22 +85,54 @@ pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
 
 /// 显示并聚焦设置主窗口（已隐藏时重新显示），位置先贴到屏幕右下角。
 pub fn show_settings(app: &AppHandle<Wry>) {
+    if EXIT_PENDING.load(Ordering::SeqCst) {
+        return;
+    }
     if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
         place_bottom_right(&win);
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
         info!("从托盘打开设置窗口");
+        // 等窗口真正显示稳定后再让 Vue 播放右侧滑入动画
+        let anim_win = win.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(ENTER_DELAY_MS));
+            let _ = anim_win.eval("window.__yulinkEnter?.()");
+        });
     } else {
         warn!("设置主窗口不存在（label={MAIN_WINDOW}）");
     }
 }
 
+/// 收起：先让 Vue 向右滑出，动画结束后再隐藏窗口（窗口本身不移动）。
+pub fn hide_settings(app: &AppHandle<Wry>) {
+    let Some(win) = app.get_webview_window(MAIN_WINDOW) else {
+        return;
+    };
+    if !win.is_visible().unwrap_or(false) {
+        return;
+    }
+    if EXIT_PENDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = win.eval("window.__yulinkExit?.()");
+    let hide_win = win.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(EXIT_WAIT_MS));
+        let _ = hide_win.hide();
+        EXIT_PENDING.store(false, Ordering::SeqCst);
+    });
+}
+
 /// 托盘左键：Win11 控制中心式开合——已显示且聚焦则收起，否则显示。
 pub fn toggle_settings(app: &AppHandle<Wry>) {
+    if EXIT_PENDING.load(Ordering::SeqCst) {
+        return;
+    }
     if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
         if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
-            let _ = win.hide();
+            hide_settings(app);
             return;
         }
         show_settings(app);
