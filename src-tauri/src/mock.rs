@@ -8,6 +8,7 @@ use crate::bridge::read_request_head;
 
 const WIRELESS_HTML: &str = include_str!("../../mock/wireless.html");
 const WIRED_HTML: &str = include_str!("../../mock/wired.html");
+const SUCCESS_HTML: &str = "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\"><title>已连接</title></head><body style=\"font-family:'Microsoft YaHei';padding:30px\"><h2>已连接（mock 成功页）</h2></body></html>";
 
 pub fn spawn_mock_server() -> std::io::Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -37,6 +38,7 @@ fn serve_mock_connection(stream: &mut TcpStream) -> std::io::Result<()> {
     let (status, reason, body): (u16, &str, &[u8]) = match path {
         "/" | "/index.html" | "/wireless.html" => (200, "OK", WIRELESS_HTML.as_bytes()),
         "/wired.html" => (200, "OK", WIRED_HTML.as_bytes()),
+        "/portal-success.html" => (200, "OK", SUCCESS_HTML.as_bytes()),
         "/ext-ok" => (204, "No Content", b""),
         _ => (404, "Not Found", b"not found"),
     };

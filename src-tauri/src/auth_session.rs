@@ -102,7 +102,8 @@ pub fn run_login(
                     started_at.get_or_insert_with(Instant::now);
                 }
                 "filled" => {}
-                "ok" => break 'outer LoginOutcome {
+                // 页面整页跳转（登录成功后的重定向）也算成功
+                "ok" | "navigating" => break 'outer LoginOutcome {
                     kind: LoginOutcomeKind::Ok,
                 },
                 "failed" => break 'outer LoginOutcome {

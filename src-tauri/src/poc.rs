@@ -276,6 +276,11 @@ fn run_single(
                     }
                 }
                 "filled" => {}
+                // 页面跳转（登录成功重定向）视为成功
+                "navigating" => {
+                    destroy_auth_window(app, &label);
+                    return Ok("ok".to_string());
+                }
                 terminal @ ("ok" | "failed" | "captcha-error" | "error") => {
                     destroy_auth_window(app, &label);
                     return Ok(terminal.to_string());

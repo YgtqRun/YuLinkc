@@ -63,7 +63,7 @@ pub(crate) fn read_request_head(stream: &mut TcpStream) -> Option<String> {
 
 fn parse_beacon_line(request_line: &str) -> Option<BeaconEvent> {
     let mut parts = request_line.split_whitespace();
-    if parts.next()? != "GET" {
+    if !matches!(parts.next()?, "GET" | "POST") {
         return None;
     }
     let target = parts.next()?;

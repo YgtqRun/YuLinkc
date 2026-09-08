@@ -72,7 +72,11 @@
         if (!acc || !pwd) { msg.textContent = '请输入账号和密码'; return; }
         if (badcode && code !== '123456') { msg.textContent = '动态密码错误，请重新获取'; return; }
         if (result === 'fail') { msg.textContent = '认证失败：用户名或密码错误'; return; }
-        setTimeout(function () { box.textContent = '已连接（mock 成功）'; }, 300);
+        setTimeout(function () {
+          box.textContent = '已连接（mock 成功）';
+          // 与真实门户一致：登录成功后整页跳转
+          location.href = '/portal-success.html';
+        }, 600);
       });
     })();
   </script>

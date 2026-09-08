@@ -47,6 +47,21 @@
         } catch (e) { /* 忽略回传异常，不阻塞主流程 */ }
     }
 
+    // 页面即将被跳转/关闭时的上报：keepalive fetch 能随 unload 发出
+    function reportOnExit(state, msg) {
+        const url = CFG.beacon +
+            "?run=" + encodeURIComponent(CFG.run || 0) +
+            "&state=" + encodeURIComponent(state) +
+            "&msg=" + encodeURIComponent(msg || "");
+        try {
+            fetch(url, { method: "GET", keepalive: true, mode: "no-cors", cache: "no-store" })
+                .catch(function () {});
+        } catch (e) { /* 忽略 */ }
+        try {
+            new Image().src = url;
+        } catch (e) { /* 忽略 */ }
+    }
+
     // ===== 等待元素 =====
     function waitFor(selector, timeoutMs) {
         timeoutMs = timeoutMs || 15000;
@@ -139,21 +154,35 @@
             fireMouse(btn, "click");
             btn.click();
 
-            // 5) 轮询 #message：有文案 → 失败；10 次（默认 1s/次）无文案 → ok
+            // 5) 轮询 #message：有文案 → 失败；10 次（默认 1s/次）无文案 → ok。
+            //    登录成功时门户通常会整页跳转，旧文档被销毁前会上报 navigating，
+            //    同样视为成功（否则轮询会随页面销毁而中断，造成假失败）。
             const pollMs = CFG.pollMs || 1000;
             let count = 0;
-            const timer = setInterval(function () {
+            let finished = false;
+            let timer;
+            function finish(state, msg) {
+                if (finished) return;
+                finished = true;
+                clearInterval(timer);
+                reportOnExit(state, msg);
+            }
+            function onPageExit() {
+                finish("navigating", "page-exit");
+            }
+            window.addEventListener("pagehide", onPageExit);
+            window.addEventListener("beforeunload", onPageExit);
+
+            timer = setInterval(function () {
                 count++;
                 const msg = document.querySelector(SEL.message);
                 if (msg && msg.innerText && msg.innerText.trim() !== "") {
-                    clearInterval(timer);
                     const text = msg.innerText.trim();
-                    report(isAuthCodeError(text) ? "captcha-error" : "failed", text);
+                    finish(isAuthCodeError(text) ? "captcha-error" : "failed", text);
                     return;
                 }
                 if (count >= (CFG.okWaitCount || 10)) {
-                    clearInterval(timer);
-                    report("ok", "");
+                    finish("ok", "");
                 }
             }, pollMs);
         } catch (err) {
