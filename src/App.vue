@@ -401,15 +401,15 @@ onUnmounted(() => {
           </button>
         </template>
         <template v-else>
+          <div class="title-box" data-tauri-drag-region>
+            <h1>设置</h1>
+            <p>认证网址 / 运行模式 / 自启</p>
+          </div>
           <button class="icon-btn" type="button" title="返回" @click="page = 'home'">
             <svg viewBox="0 0 24 24" width="15" height="15">
               <path d="M15 18l-6-6 6-6" />
             </svg>
           </button>
-          <div class="title-box" data-tauri-drag-region>
-            <h1>设置</h1>
-            <p>认证网址 / 运行模式 / 自启</p>
-          </div>
         </template>
       </header>
 
