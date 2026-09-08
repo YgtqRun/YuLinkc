@@ -4,9 +4,10 @@
 //!   $env:YULINK_POC=1; $env:YULINK_POC_MODE="all"; npm run tauri dev
 //!
 //! 环境变量：
-//!   YULINK_POC        = 1 启用 POC（未设置时走正常应用逻辑）
-//!   YULINK_POC_MODE   = success | fail | captcha | wired | all
-//!   YULINK_POC_RUNS   = 每轮循环次数（用于创建/销毁压力测试）
+//!   YULINK_POC          = 1 启用 POC（未设置时走正常应用逻辑）
+//!   YULINK_POC_MODE     = success | fail | captcha | wired | all
+//!   YULINK_POC_RUNS     = 每轮循环次数（用于创建/销毁压力测试）
+//!   YULINK_AUTH_VISIBLE = 0 强制隐藏 / 1 强制显示认证窗口（详见 auth_window.rs）
 
 use std::{
     env,
@@ -17,7 +18,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use crate::auth_window::{create_auth_window, AuthWindowVisibility};
+use tauri::{AppHandle, Manager};
 
 const WIRELESS_HTML: &str = include_str!("../../mock/wireless.html");
 const WIRED_HTML: &str = include_str!("../../mock/wired.html");
@@ -185,53 +187,9 @@ fn hex_val(b: u8) -> Option<u8> {
 }
 
 // ===================== 认证窗口 =====================
-
-/// 创建“屏幕外可见”的认证窗口：位置在 -32000,-32000，无边框、不进任务栏，
-/// 但保持 visible 状态，规避隐藏 WebView 下 eval 被 no-op 的问题。
-fn create_auth_window(app: &AppHandle, label: &str, url: &str) -> Result<(), String> {
-    let parsed = tauri::Url::parse(url).map_err(|e| format!("URL 解析失败: {e}"))?;
-    // 诊断开关：YULINK_POC_ONS=1 时在屏幕上可见创建（对照屏幕外是否导致 WebView2 不执行）
-    let onscreen = env::var("YULINK_POC_ONS").map(|v| v == "1").unwrap_or(false);
-    let (position, size, focused) = if onscreen {
-        ((200.0f64, 200.0f64), (900.0f64, 700.0f64), true)
-    } else {
-        ((-32000.0f64, -32000.0f64), (900.0f64, 700.0f64), false)
-    };
-    println!(
-        "[POC] 认证窗口位置: {}",
-        if onscreen { "屏幕内(200,200)" } else { "屏幕外(-32000,-32000)" }
-    );
-    let (tx, rx) = mpsc::channel::<Result<(), String>>();
-    let app2 = app.clone();
-    let label_owned = label.to_string();
-    let nav_url = parsed.clone();
-    app.run_on_main_thread(move || {
-        let result = WebviewWindowBuilder::new(&app2, label_owned, WebviewUrl::External(parsed))
-            .title("YuLink Auth")
-            .inner_size(size.0, size.1)
-            .position(position.0, position.1)
-            .decorations(false)
-            .resizable(false)
-            .skip_taskbar(true)
-            .visible(true)
-            .focused(focused)
-            .on_page_load(|_w, payload| {
-                println!("[POC] page_load {} {:?}", payload.url(), payload.event());
-            })
-            .build()
-            .and_then(|win| {
-                // 建窗后再次显式导航，规避初始导航未触发的情况
-                win.navigate(nav_url)?;
-                Ok(win)
-            })
-            .map(|_| ())
-            .map_err(|e| e.to_string());
-        let _ = tx.send(result);
-    })
-    .map_err(|e| format!("主线程调度失败: {e}"))?;
-    rx.recv_timeout(Duration::from_secs(10))
-        .map_err(|e| format!("等待窗口创建超时: {e}"))?
-}
+// 窗口创建与显示策略统一走 auth_window::create_auth_window：
+// debug 默认屏幕内显示、release 默认屏幕外隐藏，可用 YULINK_AUTH_VISIBLE 覆盖。
+// 此模块只负责 POC 编排与窗口销毁/清理。
 
 fn destroy_auth_window(app: &AppHandle, label: &str) {
     let app2 = app.clone();
@@ -282,6 +240,9 @@ pub fn run_poc(app: &AppHandle) -> Result<(), String> {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.hide();
     }
+
+    let visibility = AuthWindowVisibility::resolve();
+    println!("[POC] 认证窗口显示策略: {}", visibility.describe());
 
     let mode = env::var("YULINK_POC_MODE").unwrap_or_else(|_| "all".to_string());
     let repeat = env::var("YULINK_POC_RUNS")
@@ -361,7 +322,15 @@ pub fn run_poc(app: &AppHandle) -> Result<(), String> {
                 scenario.name,
                 expected = scenario.expected
             );
-            match run_single(app, &beacon_rx, &base_url, &beacon, scenario, run_id) {
+            match run_single(
+                app,
+                &beacon_rx,
+                &base_url,
+                &beacon,
+                scenario,
+                run_id,
+                visibility,
+            ) {
                 Ok(actual) => {
                     if actual == scenario.expected {
                         passed += 1;
@@ -399,12 +368,13 @@ fn run_single(
     beacon: &str,
     scenario: &Scenario,
     run_id: u64,
+    visibility: AuthWindowVisibility,
 ) -> Result<String, String> {
     cleanup_auth_windows(app);
     let label = format!("auth-{run_id}");
     let url = format!("{base_url}{}", scenario.path);
     println!("[POC] run#{run_id} 创建认证窗口({label}) -> {url}");
-    create_auth_window(app, &label, &url)?;
+    create_auth_window(app, &label, &url, visibility)?;
 
     let cfg = serde_json::json!({
         "account": "20240001",
@@ -445,7 +415,7 @@ fn run_single(
                 "started" => {
                     if started_at.is_none() {
                         started_at = Some(Instant::now());
-                        println!("[POC] run#{run_id} 注入确认：eval 已在屏幕外窗口执行");
+                        println!("[POC] run#{run_id} 注入确认：eval 已在认证窗口执行");
                     }
                 }
                 "filled" => {}

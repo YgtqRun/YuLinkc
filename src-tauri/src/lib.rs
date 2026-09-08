@@ -1,4 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+mod auth_window;
 mod poc;
 
 #[tauri::command]
