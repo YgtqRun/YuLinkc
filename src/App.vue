@@ -649,7 +649,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-5) var(--space-2);
+  padding: var(--space-4) var(--space-5) var(--space-2);
   -webkit-app-region: drag;
 }
 .brand-icon {
