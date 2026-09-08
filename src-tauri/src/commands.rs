@@ -2,7 +2,7 @@
 //! 开机自启、立即登录（M3 前为占位）。
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::store::{
     AppConfig, ConfigPaths, ConfigState, PERMANENT_HOURS,
@@ -23,6 +23,9 @@ pub struct SettingsView {
     pub sms_saved_at: i64,
     pub sms_status_text: String,
     pub autostart: bool,
+    pub away_mode: bool,
+    pub portal_wireless: String,
+    pub portal_wired: String,
     pub status: StatusView,
 }
 
@@ -57,6 +60,9 @@ pub struct SaveSettingsRequest {
     pub account: Option<AccountInput>,
     /// 提供且 code 非空时覆盖动态密码；否则仅更新有效期设定（或保留原码）
     pub sms: Option<SmsInput>,
+    pub portal_wireless: Option<String>,
+    pub portal_wired: Option<String>,
+    pub away_mode: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +115,9 @@ fn build_view(cfg: &AppConfig) -> SettingsView {
         sms_saved_at: cfg.sms_code.as_ref().map(|s| s.saved_at).unwrap_or(0),
         sms_status_text: cfg.sms_status_text(now),
         autostart: cfg.preferences.autostart,
+        away_mode: cfg.preferences.away_mode,
+        portal_wireless: cfg.preferences.portal_wireless.clone(),
+        portal_wired: cfg.preferences.portal_wired.clone(),
         status: StatusView {
             kind: kind.to_string(),
             text,
@@ -142,6 +151,7 @@ pub fn get_settings(
 
 #[tauri::command]
 pub fn save_settings(
+    app: AppHandle,
     req: SaveSettingsRequest,
     paths: State<'_, ConfigPaths>,
     config_state: State<'_, ConfigState>,
@@ -170,7 +180,29 @@ pub fn save_settings(
         }
     }
 
+    if let Some(url) = req.portal_wireless {
+        let url = url.trim();
+        if url.is_empty() {
+            return Err("无线认证网址不能为空".into());
+        }
+        cfg.preferences.portal_wireless = url.to_string();
+    }
+    if let Some(url) = req.portal_wired {
+        let url = url.trim();
+        if url.is_empty() {
+            return Err("有线认证网址不能为空".into());
+        }
+        cfg.preferences.portal_wired = url.to_string();
+    }
+    if let Some(away) = req.away_mode {
+        cfg.preferences.away_mode = away;
+    }
+
     save_config(&cfg, &paths, &config_state)?;
+    // 配置变更后让调度器立即按新配置巡检（离校模式/网址立即生效）
+    if let Some(scheduler) = app.try_state::<Scheduler>() {
+        scheduler.check_now();
+    }
     Ok(build_view(&cfg))
 }
 
@@ -219,7 +251,15 @@ pub fn set_autostart(
 
 /// 触发一次即时登录（由调度器执行完整认证流程）。
 #[tauri::command]
-pub fn login_now(scheduler: State<'_, Scheduler>) -> Result<CommandResult, String> {
+pub fn login_now(
+    config_state: State<'_, ConfigState>,
+    scheduler: State<'_, Scheduler>,
+) -> Result<CommandResult, String> {
+    if let Ok(cfg) = config_state.0.lock() {
+        if cfg.preferences.away_mode {
+            return Err("离校模式已开启，不会执行验证流程。请先在设置中关闭离校模式".into());
+        }
+    }
     scheduler.request_login();
     Ok(CommandResult {
         ok: true,

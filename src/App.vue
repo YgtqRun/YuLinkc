@@ -20,6 +20,9 @@ interface SettingsView {
   smsSavedAt: number;
   smsStatusText: string;
   autostart: boolean;
+  awayMode: boolean;
+  portalWireless: string;
+  portalWired: string;
   status: StatusView;
 }
 
@@ -37,6 +40,9 @@ interface SmsInput {
 interface SaveRequest {
   account?: AccountInput;
   sms?: SmsInput;
+  portalWireless?: string;
+  portalWired?: string;
+  awayMode?: boolean;
 }
 
 interface CommandResult {
@@ -48,6 +54,7 @@ const PRESET_HOURS = [1, 3, 9, 18, 27];
 const DEFAULT_HOURS = 27;
 const PERMANENT = -1;
 
+const page = ref<"home" | "settings">("home");
 const username = ref("");
 const password = ref("");
 const showPassword = ref(false);
@@ -57,6 +64,9 @@ const savedSmsStatusText = ref("未设置");
 const expireChoice = ref(String(DEFAULT_HOURS));
 const customHours = ref("");
 const autostart = ref(false);
+const awayMode = ref(false);
+const portalWireless = ref("");
+const portalWired = ref("");
 const statusView = ref<StatusView>({ kind: "checking", text: "读取中…" });
 const busy = ref(false);
 const toast = ref<{ text: string; type: string } | null>(null);
@@ -91,6 +101,9 @@ function applyView(v: SettingsView) {
   smsStatusText.value = v.smsStatusText;
   savedSmsStatusText.value = v.smsStatusText;
   autostart.value = v.autostart;
+  awayMode.value = v.awayMode;
+  portalWireless.value = v.portalWireless;
+  portalWired.value = v.portalWired;
   statusView.value = v.status;
 
   const h = v.smsHours;
@@ -145,7 +158,7 @@ function choiceHours(): number | null {
   return Number(v);
 }
 
-function collectRequest(): SaveRequest | { error: string } {
+function collectCredentialRequest(): SaveRequest | { error: string } {
   const req: SaveRequest = {};
   const acc = username.value.trim();
   const pwd = password.value;
@@ -166,8 +179,8 @@ function collectRequest(): SaveRequest | { error: string } {
   return req;
 }
 
-async function save() {
-  const req = collectRequest();
+async function saveCredentials() {
+  const req = collectCredentialRequest();
   if ("error" in req) {
     showToast(req.error, "error");
     return false;
@@ -175,7 +188,7 @@ async function save() {
   busy.value = true;
   try {
     applyView(await invoke<SettingsView>("save_settings", { req }));
-    showToast("已保存", "success");
+    showToast("凭据已保存", "success");
     return true;
   } catch (e) {
     showToast(String(e), "error");
@@ -185,8 +198,62 @@ async function save() {
   }
 }
 
+async function saveSettings() {
+  busy.value = true;
+  const req: SaveRequest = {
+    portalWireless: portalWireless.value.trim(),
+    portalWired: portalWired.value.trim(),
+    awayMode: awayMode.value,
+  };
+  try {
+    applyView(await invoke<SettingsView>("save_settings", { req }));
+    showToast("设置已保存", "success");
+  } catch (e) {
+    showToast(String(e), "error");
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function toggleAwayMode() {
+  const target = !awayMode.value;
+  awayMode.value = target;
+  busy.value = true;
+  try {
+    const view = await invoke<SettingsView>("save_settings", {
+      req: { awayMode: target },
+    });
+    applyView(view);
+    showToast(
+      target ? "已开启离校模式：暂停自动认证" : "已关闭离校模式",
+      target ? "info" : "success"
+    );
+  } catch (e) {
+    awayMode.value = !target;
+    showToast(String(e), "error");
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function toggleAutostart() {
+  const target = !autostart.value;
+  autostart.value = target;
+  try {
+    const res = await invoke<CommandResult>("set_autostart", { enabled: target });
+    showToast(res.message, "success");
+  } catch (e) {
+    autostart.value = !target;
+    showToast(String(e), "error");
+  }
+}
+
 async function loginNow() {
-  const ok = await save();
+  if (awayMode.value) {
+    showToast("离校模式已开启，不会执行验证流程", "error");
+    return;
+  }
+  const ok = await saveCredentials();
   if (!ok) return;
   busy.value = true;
   try {
@@ -233,18 +300,6 @@ async function clearAll() {
   }
 }
 
-async function toggleAutostart() {
-  const target = !autostart.value;
-  autostart.value = target;
-  try {
-    const res = await invoke<CommandResult>("set_autostart", { enabled: target });
-    showToast(res.message, "success");
-  } catch (e) {
-    autostart.value = !target;
-    showToast(String(e), "error");
-  }
-}
-
 function onSmsInput() {
   const code = smsCode.value.trim();
   if (code) {
@@ -256,7 +311,11 @@ function onSmsInput() {
 
 function onEscape(e: KeyboardEvent) {
   if (e.key === "Escape") {
-    appWindow.hide();
+    if (page.value === "settings") {
+      page.value = "home";
+    } else {
+      appWindow.hide();
+    }
   }
 }
 
@@ -282,22 +341,41 @@ onUnmounted(() => {
   <div class="page">
     <div class="flyout-card">
       <header class="head" data-tauri-drag-region>
-        <div class="brand-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="18" height="18">
-            <path d="M8.5 3h7M12 3v4" />
-            <path d="M7 7h10l-1.2 12a2 2 0 0 1-2 1.8h-3.6a2 2 0 0 1-2-1.8L7 7z" />
-            <path d="M10 11.5v4M14 11.5v4" />
-          </svg>
-        </div>
-        <div class="title-box" data-tauri-drag-region>
-          <h1>御连 YuLink</h1>
-          <p>校园网自动认证</p>
-        </div>
-        <button class="icon-btn" type="button" title="收起" @click="hideFlyout">
-          <svg viewBox="0 0 24 24" width="14" height="14">
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        </button>
+        <template v-if="page === 'home'">
+          <div class="brand-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18">
+              <path d="M8.5 3h7M12 3v4" />
+              <path d="M7 7h10l-1.2 12a2 2 0 0 1-2 1.8h-3.6a2 2 0 0 1-2-1.8L7 7z" />
+              <path d="M10 11.5v4M14 11.5v4" />
+            </svg>
+          </div>
+          <div class="title-box" data-tauri-drag-region>
+            <h1>御连 YuLink</h1>
+            <p>校园网自动认证</p>
+          </div>
+          <button class="icon-btn" type="button" title="设置" @click="page = 'settings'">
+            <svg viewBox="0 0 24 24" width="15" height="15">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.09a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" />
+            </svg>
+          </button>
+        </template>
+        <template v-else>
+          <button class="icon-btn" type="button" title="返回" @click="page = 'home'">
+            <svg viewBox="0 0 24 24" width="15" height="15">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+          <div class="title-box" data-tauri-drag-region>
+            <h1>设置</h1>
+            <p>认证网址 / 运行模式 / 自启</p>
+          </div>
+          <button class="icon-btn" type="button" title="收起" @click="hideFlyout">
+            <svg viewBox="0 0 24 24" width="14" height="14">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </template>
       </header>
 
       <section class="status" :class="statusClass">
@@ -306,15 +384,21 @@ onUnmounted(() => {
           <strong>{{ statusView.text }}</strong>
           <small>动态密码 {{ smsStatusText }}</small>
         </div>
-        <button class="login-chip" type="button" :disabled="busy" @click="loginNow">
+        <button
+          v-if="page === 'home'"
+          class="login-chip"
+          type="button"
+          :disabled="busy || awayMode"
+          @click="loginNow"
+        >
           <svg viewBox="0 0 24 24" width="12" height="12">
             <path d="M8 5.5v13l10-6.5z" />
           </svg>
-          {{ busy ? "处理中" : "立即登录" }}
+          {{ busy ? "处理中" : awayMode ? "离校模式" : "立即登录" }}
         </button>
       </section>
 
-      <main class="body">
+      <main v-if="page === 'home'" class="body">
         <section class="group">
           <div class="group-title">账号</div>
           <div class="field-card">
@@ -374,22 +458,77 @@ onUnmounted(() => {
             <p class="hint">保存后开始计时；有效期内可重复使用，登录失败不会自动清除</p>
           </div>
         </section>
+      </main>
 
-        <section class="switch-card" @click="toggleAutostart">
-          <div>
-            <strong>开机自启</strong>
-            <small>登录 Windows 后自动完成认证</small>
+      <main v-else class="body">
+        <section class="group">
+          <div class="group-title">认证网址</div>
+          <div class="field-card">
+            <label class="row url-row">
+              <span>无线认证</span>
+              <input v-model="portalWireless" spellcheck="false" placeholder="http://172.26.255.2/" />
+            </label>
+            <label class="row url-row">
+              <span>有线认证</span>
+              <input v-model="portalWired" spellcheck="false" placeholder="http://172.26.255.3/" />
+            </label>
           </div>
-          <span class="switch" :class="{ on: autostart }"><i></i></span>
+        </section>
+
+        <section class="group">
+          <div class="group-title">运行</div>
+          <div class="switch-card" @click="toggleAwayMode">
+            <div>
+              <strong>离校模式</strong>
+              <small>开启后不会自动启动，也不会执行验证流程</small>
+            </div>
+            <span class="switch" :class="{ on: awayMode }"><i></i></span>
+          </div>
+          <div class="switch-card" @click="toggleAutostart">
+            <div>
+              <strong>开机自启动</strong>
+              <small>登录 Windows 后自动运行</small>
+            </div>
+            <span class="switch" :class="{ on: autostart }"><i></i></span>
+          </div>
+        </section>
+
+        <section class="group">
+          <div class="group-title">数据</div>
+          <div class="danger-card">
+            <div>
+              <strong>清除已保存的账号、密码与动态密码</strong>
+            </div>
+            <button class="danger-btn" type="button" :disabled="busy" @click="clearAll">
+              {{ clearArmed ? "再点一次确认" : "清空数据" }}
+            </button>
+          </div>
         </section>
       </main>
 
       <footer class="foot">
-        <button class="danger" type="button" :disabled="busy" @click="clearAll">
-          {{ clearArmed ? "再点一次确认清空" : "清空凭据" }}
-        </button>
         <span class="spacer"></span>
-        <button class="ghost" type="button" :disabled="busy" @click="save">保存</button>
+        <button
+          v-if="page === 'settings'"
+          class="ghost"
+          type="button"
+          :disabled="busy"
+          @click="page = 'home'"
+        >
+          返回
+        </button>
+        <button
+          v-if="page === 'settings'"
+          class="primary"
+          type="button"
+          :disabled="busy"
+          @click="saveSettings"
+        >
+          {{ busy ? "保存中…" : "保存设置" }}
+        </button>
+        <button v-else class="primary" type="button" :disabled="busy" @click="saveCredentials">
+          {{ busy ? "保存中…" : "保存凭据" }}
+        </button>
       </footer>
     </div>
 
@@ -426,10 +565,10 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, rgba(250, 250, 252, 0.96), rgba(242, 243, 246, 0.96));
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #f7f8fb;
+  border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 12px;
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
   overflow: hidden;
 }
 .head {
@@ -448,7 +587,7 @@ body {
   border-radius: 10px;
   background: linear-gradient(145deg, #3b82f6, #1d5fd6);
   color: #fff;
-  box-shadow: 0 3px 8px rgba(29, 95, 214, 0.35);
+  box-shadow: 0 3px 8px rgba(29, 95, 214, 0.3);
 }
 .brand-icon svg,
 .login-chip svg {
@@ -459,22 +598,26 @@ body {
 }
 .title-box {
   flex: 1;
+  min-width: 0;
   -webkit-app-region: drag;
 }
 .title-box h1 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.2px;
 }
 .title-box p {
   margin: 1px 0 0;
   font-size: 11px;
   color: #7a7f89;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .icon-btn {
   width: 30px;
   height: 30px;
+  flex: 0 0 auto;
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -487,11 +630,12 @@ body {
 .icon-btn svg {
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.8;
+  stroke-width: 1.7;
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .icon-btn:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.07);
 }
 .status {
   display: flex;
@@ -500,8 +644,8 @@ body {
   margin: 2px 16px 10px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.07);
 }
 .status .dot {
   width: 9px;
@@ -532,15 +676,15 @@ body {
 }
 .status.ok .dot {
   background: #1fa155;
-  box-shadow: 0 0 0 4px rgba(31, 161, 85, 0.14);
+  box-shadow: 0 0 0 4px rgba(31, 161, 85, 0.15);
 }
 .status.warn .dot {
   background: #d08b00;
-  box-shadow: 0 0 0 4px rgba(208, 139, 0, 0.14);
+  box-shadow: 0 0 0 4px rgba(208, 139, 0, 0.15);
 }
 .status.error .dot {
   background: #d83b3b;
-  box-shadow: 0 0 0 4px rgba(216, 59, 59, 0.14);
+  box-shadow: 0 0 0 4px rgba(216, 59, 59, 0.15);
 }
 .login-chip {
   flex: 0 0 auto;
@@ -554,13 +698,13 @@ body {
   color: #fff;
   font: 600 12px "Segoe UI Variable Text", "Segoe UI", sans-serif;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(29, 100, 216, 0.28);
 }
 .login-chip:hover:not(:disabled) {
   background: #1756c0;
 }
 .login-chip:disabled {
-  opacity: 0.65;
+  opacity: 0.55;
+  cursor: default;
 }
 .body {
   flex: 1;
@@ -598,23 +742,46 @@ body {
 }
 .field-card,
 .switch-card {
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.07);
   border-radius: 10px;
   padding: 4px 12px;
+}
+.switch-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.switch-card strong,
+.switch-card small,
+.danger-card strong {
+  display: block;
+}
+.switch-card strong,
+.danger-card strong {
+  font-size: 13px;
+}
+.switch-card small {
+  margin-top: 1px;
+  font-size: 11px;
+  color: #7a7f89;
 }
 .row {
   display: flex;
   align-items: center;
   gap: 10px;
   min-height: 44px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.045);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 .row:last-child {
   border-bottom: none;
 }
 .row > span:first-child {
-  flex: 0 0 72px;
+  flex: 0 0 74px;
   font-size: 12px;
   color: #565b64;
 }
@@ -629,6 +796,10 @@ body {
   color: #1b1b1b;
   outline: none;
   text-align: right;
+}
+.url-row input {
+  font-size: 12px;
+  color: #333;
 }
 .pwd-wrap {
   flex: 1;
@@ -672,7 +843,7 @@ body {
 .select select {
   appearance: none;
   border: 1px solid rgba(0, 0, 0, 0.08);
-  background: #f3f4f7;
+  background: #f1f2f6;
   border-radius: 7px;
   padding: 6px 26px 6px 10px;
   font: 12px "Segoe UI Variable Text", "Segoe UI", sans-serif;
@@ -705,7 +876,7 @@ body {
   flex: 0 0 90px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 7px;
-  background: #f3f4f7;
+  background: #f1f2f6;
   padding: 5px 8px;
   text-align: left;
 }
@@ -714,27 +885,6 @@ body {
   font-size: 10.5px;
   color: #8a8f98;
   line-height: 1.5;
-}
-.switch-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  cursor: pointer;
-  margin-bottom: 6px;
-}
-.switch-card strong,
-.switch-card small {
-  display: block;
-}
-.switch-card strong {
-  font-size: 13px;
-}
-.switch-card small {
-  margin-top: 1px;
-  font-size: 11px;
-  color: #7a7f89;
 }
 .switch {
   position: relative;
@@ -762,6 +912,32 @@ body {
 .switch.on i {
   left: 22px;
 }
+.danger-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(176, 50, 47, 0.18);
+  border-radius: 10px;
+  padding: 12px;
+}
+.danger-btn {
+  flex: 0 0 auto;
+  border: 1px solid rgba(176, 50, 47, 0.35);
+  background: transparent;
+  color: #b0322f;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: 600 11px "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+.danger-btn:hover:not(:disabled) {
+  background: rgba(176, 50, 47, 0.07);
+}
+.danger-btn:disabled {
+  opacity: 0.55;
+}
 .foot {
   display: flex;
   align-items: center;
@@ -771,21 +947,12 @@ body {
 .foot button {
   border: none;
   border-radius: 8px;
-  padding: 8px 14px;
+  padding: 8px 16px;
   font: 600 12px "Segoe UI Variable Text", "Segoe UI", sans-serif;
   cursor: pointer;
 }
 .foot button:disabled {
   opacity: 0.55;
-}
-.danger {
-  background: transparent;
-  color: #b0322f;
-  padding-left: 6px !important;
-  padding-right: 6px !important;
-}
-.danger:hover {
-  background: rgba(176, 50, 47, 0.07);
 }
 .spacer {
   flex: 1;
@@ -797,13 +964,20 @@ body {
 .ghost:hover {
   background: rgba(0, 0, 0, 0.11);
 }
+.primary {
+  background: #1d64d8;
+  color: #fff;
+}
+.primary:hover {
+  background: #1756c0;
+}
 .toast {
   position: fixed;
   left: 50%;
   bottom: 66px;
   transform: translateX(-50%);
   max-width: 320px;
-  background: rgba(28, 31, 36, 0.92);
+  background: #1c1f24;
   color: #fff;
   font-size: 12px;
   padding: 8px 14px;
@@ -813,10 +987,10 @@ body {
   pointer-events: none;
 }
 .toast.success {
-  background: rgba(20, 122, 62, 0.95);
+  background: #147a3e;
 }
 .toast.error {
-  background: rgba(176, 50, 47, 0.95);
+  background: #b0322f;
 }
 .toast-enter-active,
 .toast-leave-active {
@@ -832,14 +1006,15 @@ body {
     color: #e9eaee;
   }
   .flyout-card {
-    background: linear-gradient(180deg, rgba(40, 42, 48, 0.97), rgba(31, 33, 38, 0.97));
-    border-color: rgba(255, 255, 255, 0.07);
+    background: #202124;
+    border-color: rgba(255, 255, 255, 0.1);
   }
+  .status,
   .field-card,
   .switch-card,
-  .status {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.05);
+  .danger-card {
+    background: #2a2c31;
+    border-color: rgba(255, 255, 255, 0.07);
   }
   .row > span:first-child,
   .group-title,
@@ -850,9 +1025,14 @@ body {
   .switch-card small {
     color: #a8adb8;
   }
+  .row input,
+  .sms-input,
+  .custom-row input {
+    color: #e9eaee;
+  }
   .select select,
   .custom-row input {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.09);
     color: #e9eaee;
   }
   .ghost {

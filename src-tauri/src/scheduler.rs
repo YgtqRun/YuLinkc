@@ -17,6 +17,7 @@ const PORTAL_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub enum SchedMessage {
     LoginNow,
+    CheckNow,
 }
 
 /// 供托盘/命令持有的调度器句柄。
@@ -28,6 +29,11 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn request_login(&self) {
         let _ = self.tx.send(SchedMessage::LoginNow);
+    }
+
+    /// 仅唤醒一次巡检（配置/网址/模式变更后立即生效）。
+    pub fn check_now(&self) {
+        let _ = self.tx.send(SchedMessage::CheckNow);
     }
 }
 
@@ -41,6 +47,7 @@ pub fn spawn(app: &AppHandle) -> Scheduler {
             force_login = false;
             match rx.recv_timeout(Duration::from_secs(wait_secs)) {
                 Ok(SchedMessage::LoginNow) => force_login = true,
+                Ok(SchedMessage::CheckNow) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
                 _ => {}
             }
@@ -58,6 +65,12 @@ fn check_once(app: &AppHandle, force_login: bool) -> u64 {
     };
     let state = app.state::<RuntimeState>();
     let prefs = &cfg.preferences;
+
+    // 离校模式：暂停一切自动认证（含手动"立即登录"）
+    if prefs.away_mode {
+        state.set(app, "away-mode", "离校模式：自动认证已暂停".into());
+        return 300;
+    }
 
     if cfg.account.is_none() {
         state.set(app, "unconfigured", "未配置账号，点击托盘打开设置".into());

@@ -72,6 +72,8 @@ pub struct SmsCode {
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
     pub autostart: bool,
+    /// 离校模式：暂停自动认证与验证流程
+    pub away_mode: bool,
     pub adapter_mode: String,
     pub portal_wireless: String,
     pub portal_wired: String,
@@ -130,6 +132,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             autostart: true,
+            away_mode: false,
             adapter_mode: "auto".into(),
             portal_wireless: "http://172.26.255.2/".into(),
             portal_wired: "http://172.26.255.3/".into(),
