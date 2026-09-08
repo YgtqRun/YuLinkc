@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "yulink",
+        "title": "御连 YuLink",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "visible": false
       }
     ],
     "security": {
