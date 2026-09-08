@@ -429,9 +429,8 @@ body {
   background: linear-gradient(180deg, rgba(250, 250, 252, 0.96), rgba(242, 243, 246, 0.96));
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
   overflow: hidden;
-  backdrop-filter: blur(20px);
 }
 .head {
   display: flex;
