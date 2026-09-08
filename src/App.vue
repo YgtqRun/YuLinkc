@@ -71,6 +71,7 @@ const statusView = ref<StatusView>({ kind: "checking", text: "读取中…" });
 const busy = ref(false);
 const toast = ref<{ text: string; type: string } | null>(null);
 const clearArmed = ref(false);
+const shown = ref(false);
 const entering = ref(false);
 const closing = ref(false);
 
@@ -82,13 +83,18 @@ let exitTimer: number | undefined;
 
 const appWindow = getCurrentWindow();
 
-/** 弹窗显示时：从右侧滑入（仅内容动画，不动系统窗口） */
+/** Rust 在窗口显示前调用：先把卡片放到右侧外并隐藏，避免首帧闪现 */
+function prepareShow() {
+  shown.value = false;
+  entering.value = false;
+  closing.value = false;
+}
+
+/** Rust 在窗口稳定显示后调用：从右侧滑入 */
 function playEnter() {
   if (closing.value) return;
-  entering.value = false;
-  window.requestAnimationFrame(() => {
-    entering.value = true;
-  });
+  shown.value = true;
+  entering.value = true;
   if (enterTimer) window.clearTimeout(enterTimer);
   enterTimer = window.setTimeout(() => {
     entering.value = false;
@@ -101,6 +107,7 @@ async function playExit() {
   closing.value = true;
   if (exitTimer) window.clearTimeout(exitTimer);
   exitTimer = window.setTimeout(async () => {
+    shown.value = false;
     closing.value = false;
     await appWindow.hide().catch(() => {
       // 极少数情况下 hide 被拒绝时忽略（Rust 侧也会兜底隐藏）
@@ -358,6 +365,7 @@ onMounted(() => {
   initRuntimeStatus();
   window.addEventListener("keydown", onEscape);
   // 供 Rust 侧在窗口稳定显示后调用：__yulinkEnter / __yulinkExit
+  (window as unknown as Record<string, unknown>).__yulinkPrepare = prepareShow;
   (window as unknown as Record<string, unknown>).__yulinkEnter = playEnter;
   (window as unknown as Record<string, unknown>).__yulinkExit = playExit;
 });
@@ -374,7 +382,14 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
-    <div class="flyout-card" :class="{ 'flyout-in': entering, 'flyout-out': closing }">
+    <div
+      class="flyout-card"
+      :class="{
+        'flyout-hidden': !shown && !closing,
+        'flyout-in': entering,
+        'flyout-out': closing,
+      }"
+    >
       <header class="head" data-tauri-drag-region>
         <template v-if="page === 'home'">
           <div class="brand-icon" aria-hidden="true">
@@ -612,10 +627,14 @@ body {
 .flyout-out {
   animation: flyout-out 0.18s cubic-bezier(0.7, 0, 0.84, 0) forwards;
 }
+.flyout-hidden {
+  opacity: 0;
+  transform: translateX(46px);
+}
 @keyframes flyout-in {
   from {
     transform: translateX(46px);
-    opacity: 0.25;
+    opacity: 0;
   }
   to {
     transform: translateX(0);
@@ -773,6 +792,20 @@ body {
   overflow-y: auto;
   padding: 0 14px 6px;
   scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+.body::-webkit-scrollbar {
+  width: 7px;
+}
+.body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+}
+.body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
 }
 .group {
   margin-bottom: 10px;

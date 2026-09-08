@@ -89,6 +89,8 @@ pub fn show_settings(app: &AppHandle<Wry>) {
         return;
     }
     if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
+        // 显示前先把卡片置于右侧外隐藏，首帧不闪现
+        let _ = win.eval("window.__yulinkPrepare?.()");
         place_bottom_right(&win);
         let _ = win.show();
         let _ = win.unminimize();
