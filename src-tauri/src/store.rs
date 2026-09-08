@@ -18,6 +18,9 @@ const CONFIG_FILE: &str = "config.json";
 #[allow(dead_code)] // M2 设置界面接入后不再需要手动许可
 const DPAPI_PREFIX: &str = "dpapi:v1:";
 
+/// 永久有效的标记（与油猴脚本 PERMANENT = -1 对齐）
+pub const PERMANENT_HOURS: f64 = -1.0;
+
 /// 由 setup 管理，供各模块定位配置文件。
 #[derive(Clone)]
 pub struct ConfigPaths {
@@ -158,6 +161,57 @@ impl AppConfig {
         let sms = self.sms_code.as_ref()?;
         let bytes = decrypt_secret(&sms.code_enc).ok()?;
         Some(String::from_utf8(bytes).ok()?)
+    }
+
+    /// 动态密码在 `now`（unix 毫秒）是否有效。
+    pub fn sms_valid_at(&self, now: i64) -> bool {
+        let Some(sms) = self.sms_code.as_ref() else {
+            return false;
+        };
+        if sms.hours < 0.0 {
+            return true; // 永久
+        }
+        let remain = sms.hours * 3_600_000.0 - (now - sms.saved_at) as f64;
+        remain > 0.0
+    }
+
+    /// 动态密码剩余毫秒；永久或无配置返回 None。
+    pub fn sms_remaining_ms(&self, now: i64) -> Option<i64> {
+        let sms = self.sms_code.as_ref()?;
+        if sms.hours < 0.0 {
+            return None;
+        }
+        let remain = (sms.hours * 3_600_000.0 - (now - sms.saved_at) as f64).round() as i64;
+        Some(remain.max(0))
+    }
+
+    /// 动态密码剩余状态文案（与油猴脚本 captchaStatusText 一致）。
+    pub fn sms_status_text(&self, now: i64) -> String {
+        let Some(sms) = self.sms_code.as_ref() else {
+            return "未设置".into();
+        };
+        if sms.code_enc.is_empty() {
+            return "未设置".into();
+        }
+        if sms.hours < 0.0 {
+            return "永久有效".into();
+        }
+        if !(sms.hours > 0.0) {
+            return "配置异常".into();
+        }
+        let remain = sms.hours * 3_600_000.0 - (now - sms.saved_at) as f64;
+        if remain <= 0.0 {
+            return "已过期".into();
+        }
+        let remain_h = remain / 3_600_000.0;
+        if remain_h >= 24.0 {
+            format!("有效，剩余约 {:.1} 天", remain_h / 24.0)
+        } else if remain_h >= 1.0 {
+            format!("有效，剩余约 {:.1} 小时", remain_h)
+        } else {
+            let minutes = ((remain / 60_000.0).ceil() as i64).max(1);
+            format!("有效，剩余约 {minutes} 分钟")
+        }
     }
 }
 

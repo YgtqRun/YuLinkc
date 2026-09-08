@@ -84,16 +84,9 @@ pub fn show_settings(app: &AppHandle<Wry>) {
 fn toggle_autostart(app: &AppHandle<Wry>) {
     let auto = app.autolaunch();
     let enabled = auto.is_enabled().unwrap_or(false);
-    let result = if enabled {
-        auto.disable()
-    } else {
-        auto.enable()
-    };
-    match result {
+    match set_autostart(app, !enabled) {
         Ok(()) => {
-            let now = !enabled;
-            persist_autostart(app, now);
-            info!("开机自启已{}", if now { "开启" } else { "关闭" });
+            info!("开机自启已{}", if enabled { "关闭" } else { "开启" });
         }
         Err(e) => {
             warn!("切换开机自启失败: {e}");
@@ -101,13 +94,23 @@ fn toggle_autostart(app: &AppHandle<Wry>) {
     }
 }
 
-fn persist_autostart(app: &AppHandle<Wry>, enabled: bool) {
+/// 设置开机自启并同步持久化配置与托盘菜单文案。供托盘与 UI 命令共用。
+pub(crate) fn set_autostart(app: &AppHandle<Wry>, enabled: bool) -> Result<(), String> {
+    let auto = app.autolaunch();
+    let result = if enabled {
+        auto.enable()
+    } else {
+        auto.disable()
+    };
+    result.map_err(|e| format!("切换开机自启失败: {e}"))?;
+
     let paths = app.state::<ConfigPaths>();
     let state = app.state::<ConfigState>();
     if let Ok(mut cfg) = state.0.lock() {
         cfg.preferences.autostart = enabled;
         if let Err(e) = cfg.save(&paths.dir) {
             warn!("保存开机自启配置失败: {e}");
+            return Err(format!("保存开机自启配置失败: {e}"));
         }
     }
     if let Some(handles) = app.try_state::<TrayHandles>() {
@@ -116,4 +119,5 @@ fn persist_autostart(app: &AppHandle<Wry>, enabled: bool) {
             warn!("更新托盘菜单文案失败: {e}");
         }
     }
+    Ok(())
 }

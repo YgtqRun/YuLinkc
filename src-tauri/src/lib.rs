@@ -1,16 +1,12 @@
 mod auth_window;
 mod bridge;
+mod commands;
 mod logger;
 mod poc;
 mod store;
 mod tray;
 
 use tauri::Manager;
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,7 +20,14 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![
+            commands::get_settings,
+            commands::save_settings,
+            commands::clear_sms_code,
+            commands::clear_all,
+            commands::set_autostart,
+            commands::login_now,
+        ])
         .on_window_event(|window, event| {
             // 主窗口点关闭时隐藏到托盘，而不是退出进程
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
