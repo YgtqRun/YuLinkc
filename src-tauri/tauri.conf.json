@@ -13,12 +13,15 @@
     "windows": [
       {
         "title": "御连 YuLink",
-        "width": 440,
-        "height": 720,
-        "minWidth": 400,
-        "minHeight": 620,
+        "width": 400,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 560,
         "visible": false,
-        "resizable": true
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true
       }
     ],
     "security": {

@@ -3,7 +3,7 @@
 use log::{info, warn};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Manager, PhysicalPosition, Wry};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::scheduler::Scheduler;
@@ -64,7 +64,7 @@ pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
                 ..
             } = event
             {
-                show_settings(tray.app_handle());
+                toggle_settings(tray.app_handle());
             }
         })
         .build(app)
@@ -74,9 +74,10 @@ pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
     Ok(())
 }
 
-/// 显示并聚焦设置主窗口（已隐藏时重新显示）。
+/// 显示并聚焦设置主窗口（已隐藏时重新显示），位置先贴到屏幕右下角。
 pub fn show_settings(app: &AppHandle<Wry>) {
     if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
+        place_bottom_right(&win);
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
@@ -84,6 +85,37 @@ pub fn show_settings(app: &AppHandle<Wry>) {
     } else {
         warn!("设置主窗口不存在（label={MAIN_WINDOW}）");
     }
+}
+
+/// 托盘左键：Win11 控制中心式开合——已显示且聚焦则收起，否则显示。
+pub fn toggle_settings(app: &AppHandle<Wry>) {
+    if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
+        if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
+            let _ = win.hide();
+            return;
+        }
+        show_settings(app);
+    }
+}
+
+/// 把窗口放到当前显示器工作区右下角（距边缘 20px，位于任务栏上方）。
+fn place_bottom_right(win: &tauri::WebviewWindow<Wry>) {
+    let monitor = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| win.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return;
+    };
+    let work = monitor.work_area();
+    let Ok(size) = win.outer_size() else {
+        return;
+    };
+    let margin = 20i32;
+    let x = work.position.x + work.size.width as i32 - size.width as i32 - margin;
+    let y = work.position.y + work.size.height as i32 - size.height as i32 - margin;
+    let _ = win.set_position(PhysicalPosition::new(x.max(0), y.max(0)));
 }
 
 fn toggle_autostart(app: &AppHandle<Wry>) {

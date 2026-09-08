@@ -43,6 +43,20 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            // Win11 控制中心式：点击外部失焦即收起（登录进行中除外）
+            if let tauri::WindowEvent::Focused(false) = event {
+                if window.label() == tray::MAIN_WINDOW {
+                    let logging_in = window
+                        .app_handle()
+                        .try_state::<state::RuntimeState>()
+                        .and_then(|s| s.current())
+                        .map(|p| p.kind == "logging-in")
+                        .unwrap_or(false);
+                    if !logging_in {
+                        let _ = window.hide();
+                    }
+                }
+            }
         });
 
     builder = builder.setup(|app| {
