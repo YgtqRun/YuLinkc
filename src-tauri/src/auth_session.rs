@@ -58,6 +58,7 @@ pub fn run_login(
     account: &str,
     password: &str,
     sms_code: &str,
+    selectors: &crate::store::Selectors,
     visibility: AuthWindowVisibility,
 ) -> Result<LoginOutcome, String> {
     cleanup_auth_windows(app, "auth-");
@@ -82,7 +83,8 @@ pub fn run_login(
         "timeoutMs": 15000,
         "pollMs": 1000,
         "okWaitMs": 10000,
-        "okWaitCount": 12
+        "okWaitCount": 12,
+        "selectors": selectors
     });
     let js = build_auth_js(&cfg);
 

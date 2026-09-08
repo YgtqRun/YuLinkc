@@ -4,7 +4,8 @@
 // {
 //   "account": "...", "password": "...", "isp": "2", "smsCode": "...",
 //   "beacon": "http://127.0.0.1:<port>/report", "run": 1,
-//   "timeoutMs": 15000, "pollMs": 500, "okWaitMs": 3500, "okWaitCount": 10
+//   "timeoutMs": 15000, "pollMs": 500, "okWaitMs": 3500, "okWaitCount": 10,
+//   "selectors": { "root": "#f1_div", "account": "...", ... } // 可缺省，缺省用内置默认
 // }
 (function () {
     'use strict';
@@ -21,6 +22,20 @@
 
     const CFG = __YL_CFG__;
     if (!CFG || typeof CFG !== "object" || !CFG.beacon) return;
+
+    // ===== 选择器：优先取 Rust 下发配置，缺省回退内置默认值（与油猴脚本一致） =====
+    const SEL = Object.assign(
+        {
+            root: "#f1_div",
+            account: "#f1_div form input:nth-of-type(3)",
+            password: "#f1_div form input:nth-of-type(4)",
+            isp: "#f1_div select[name='ISP_select']",
+            dynPass: "#dynPass",
+            login: "#login_btn",
+            message: "#message"
+        },
+        CFG.selectors || {}
+    );
 
     // ===== 结果回传：Image 信标，GET 请求，跨域不受 CORS 限制 =====
     function report(state, msg) {
@@ -75,26 +90,26 @@
         report("started", "url:" + location.href);
 
         try {
-            // 1) 等待认证表单（与油猴脚本 waitFor("#f1_div") 一致）
-            await waitFor("#f1_div", CFG.timeoutMs || 15000);
+            // 1) 等待认证表单
+            await waitFor(SEL.root, CFG.timeoutMs || 15000);
 
             // 2) 账号 / 密码 / 运营商 / 动态密码
-            const accInput = document.querySelector("#f1_div form input:nth-of-type(3)");
-            const pwdInput = document.querySelector("#f1_div form input:nth-of-type(4)");
+            const accInput = document.querySelector(SEL.account);
+            const pwdInput = document.querySelector(SEL.password);
             if (!accInput || !pwdInput) {
-                report("error", "input-not-found");
+                report("error", "input-not-found:" + (accInput ? "pwd" : "acc"));
                 return;
             }
             setValue(accInput, CFG.account || "");
             setValue(pwdInput, CFG.password || "");
 
-            const isp = document.querySelector("#f1_div select[name='ISP_select']");
+            const isp = document.querySelector(SEL.isp);
             if (isp && CFG.isp) {
                 isp.value = CFG.isp;
                 isp.dispatchEvent(new Event("change", { bubbles: true }));
             }
 
-            const dynPass = document.querySelector("#dynPass");
+            const dynPass = document.querySelector(SEL.dynPass);
             if (dynPass) setValue(dynPass, CFG.smsCode || "");
 
             report(
@@ -105,7 +120,7 @@
             );
 
             // 3) 点击登录（与油猴脚本一致：mousedown/mouseup/click + click）
-            const btn = document.querySelector("#login_btn");
+            const btn = document.querySelector(SEL.login);
             if (!btn) {
                 report("error", "login-btn-not-found");
                 return;
@@ -121,7 +136,7 @@
             let count = 0;
             const timer = setInterval(function () {
                 count++;
-                const msg = document.querySelector("#message");
+                const msg = document.querySelector(SEL.message);
                 if (msg && msg.innerText && msg.innerText.trim() !== "") {
                     clearInterval(timer);
                     const text = msg.innerText.trim();

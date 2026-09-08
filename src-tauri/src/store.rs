@@ -35,7 +35,20 @@ pub struct ConfigState(pub Mutex<AppConfig>);
 pub struct AppConfig {
     pub account: Option<Account>,
     pub sms_code: Option<SmsCode>,
+    pub selectors: Selectors,
     pub preferences: Preferences,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Selectors {
+    pub root: String,
+    pub account: String,
+    pub password: String,
+    pub isp: String,
+    pub dyn_pass: String,
+    pub login: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -73,7 +86,22 @@ impl Default for AppConfig {
         Self {
             account: None,
             sms_code: None,
+            selectors: Selectors::default(),
             preferences: Preferences::default(),
+        }
+    }
+}
+
+impl Default for Selectors {
+    fn default() -> Self {
+        Self {
+            root: "#f1_div".into(),
+            account: "#f1_div form input:nth-of-type(3)".into(),
+            password: "#f1_div form input:nth-of-type(4)".into(),
+            isp: "#f1_div select[name='ISP_select']".into(),
+            dyn_pass: "#dynPass".into(),
+            login: "#login_btn".into(),
+            message: "#message".into(),
         }
     }
 }

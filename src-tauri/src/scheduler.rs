@@ -97,6 +97,7 @@ fn check_once(app: &AppHandle) -> u64 {
         &account,
         &password,
         &sms_code,
+        &cfg.selectors,
         AuthWindowVisibility::resolve(),
     );
 
