@@ -93,39 +93,65 @@ fn medium_of(iftype: u32) -> Medium {
     }
 }
 
-/// 简单 HTTP GET 探活（仅 http://），收到 2xx/3xx/4xx 均视为可达。
-pub fn http_ok(url: &str, timeout: Duration) -> bool {
+/// 执行 HTTP GET（仅 http://），返回 (状态码, 正文前 8KB)。失败返回 None。
+pub fn http_get(url: &str, timeout: Duration) -> Option<(u16, String)> {
     let Some((host, port, path)) = parse_http_url(url) else {
         log::warn!("探活 URL 无法解析（仅支持 http）: {url}");
-        return false;
+        return None;
     };
     let addr = match (host.as_str(), port).to_socket_addrs().ok().and_then(|mut it| it.next()) {
         Some(a) => a,
-        None => return false,
+        None => return None,
     };
     let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
         Ok(s) => s,
-        Err(_) => return false,
+        Err(_) => return None,
     };
     let _ = stream.set_read_timeout(Some(timeout));
     let req = format!(
         "GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n"
     );
     if stream.write_all(req.as_bytes()).is_err() {
-        return false;
+        return None;
     }
-    let mut head = [0u8; 4096];
-    let n = match stream.read(&mut head) {
-        Ok(n) => n,
-        Err(_) => return false,
-    };
-    let text = String::from_utf8_lossy(&head[..n]);
+    let mut body = Vec::with_capacity(4096);
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                body.extend_from_slice(&chunk[..n]);
+                if body.len() >= 8192 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let text = String::from_utf8_lossy(&body).into_owned();
     let status = text
         .lines()
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|s| s.parse::<u16>().ok());
-    matches!(status, Some(code) if (200..500).contains(&code))
+    status.map(|code| (code, text))
+}
+
+/// 认证页可达性：任何 HTTP 响应（2xx-4xx）都算可达。
+pub fn http_ok(url: &str, timeout: Duration) -> bool {
+    matches!(http_get(url, timeout), Some((code, _)) if (200..500).contains(&code))
+}
+
+/// 外网探活：不能只认"有响应"——认证前的劫持页也会回 200。
+/// 默认探活地址是微软连通性测试页，需正文命中；204 空响应也算通过。
+pub fn external_ok(url: &str, timeout: Duration) -> bool {
+    match http_get(url, timeout) {
+        Some((204, _)) => true,
+        Some((200, body)) => {
+            body.contains("Microsoft Connect Test") || body.trim().is_empty()
+        }
+        _ => false,
+    }
 }
 
 fn parse_http_url(url: &str) -> Option<(String, u16, String)> {

@@ -34,18 +34,24 @@ impl Scheduler {
 pub fn spawn(app: &AppHandle) -> Scheduler {
     let (tx, rx) = mpsc::channel::<SchedMessage>();
     let app2 = app.clone();
-    thread::spawn(move || loop {
-        let wait_secs = check_once(&app2);
-        match rx.recv_timeout(Duration::from_secs(wait_secs)) {
-            Err(RecvTimeoutError::Disconnected) => break,
-            _ => {}
+    thread::spawn(move || {
+        let mut force_login = false;
+        loop {
+            let wait_secs = check_once(&app2, force_login);
+            force_login = false;
+            match rx.recv_timeout(Duration::from_secs(wait_secs)) {
+                Ok(SchedMessage::LoginNow) => force_login = true,
+                Err(RecvTimeoutError::Disconnected) => break,
+                _ => {}
+            }
         }
     });
     Scheduler { tx }
 }
 
 /// 执行一轮巡检，返回下一次巡检间隔（秒）。
-fn check_once(app: &AppHandle) -> u64 {
+/// `force_login=true` 时跳过"外网通即已连接"的快捷判断，直接尝试登录（立即登录按钮）。
+fn check_once(app: &AppHandle, force_login: bool) -> u64 {
     let cfg = match app.state::<ConfigState>().0.lock() {
         Ok(g) => g.clone(),
         Err(_) => return 30,
@@ -58,8 +64,10 @@ fn check_once(app: &AppHandle) -> u64 {
         return 60;
     }
 
-    // 外网通 → 视为已连接，无需登录
-    if network::http_ok(&prefs.external_probe_url, EXTERNAL_PROBE_TIMEOUT) {
+    // 外网通 → 视为已连接，无需登录（立即登录请求除外）
+    if !force_login
+        && network::external_ok(&prefs.external_probe_url, EXTERNAL_PROBE_TIMEOUT)
+    {
         state.set(app, "connected", "已连接".into());
         return prefs.check_interval_online_sec.max(10);
     }
@@ -67,6 +75,13 @@ fn check_once(app: &AppHandle) -> u64 {
     // 外网不通：确认介质与认证页
     let medium = network::detect_medium().unwrap_or(network::Medium::Other);
     let portal = medium.portal_url(prefs);
+    if force_login {
+        log::info!("手动触发登录（介质: {}, 认证页: {portal}）", match medium {
+            network::Medium::Wireless => "无线",
+            network::Medium::Wired => "有线",
+            network::Medium::Other => "其他",
+        });
+    }
     if !network::http_ok(&portal, PORTAL_PROBE_TIMEOUT) {
         state.set(app, "network-down", "认证页不可达，等待网络恢复".into());
         return prefs.check_interval_offline_sec.max(10);
@@ -137,7 +152,7 @@ fn external_restored(app: &AppHandle, probe_url: &str) -> bool {
     let state = app.state::<RuntimeState>();
     for i in 1..=3 {
         state.set(app, "logging-in", format!("正在确认外网恢复（{i}/3）"));
-        if network::http_ok(probe_url, EXTERNAL_PROBE_TIMEOUT) {
+        if network::external_ok(probe_url, EXTERNAL_PROBE_TIMEOUT) {
             return true;
         }
         thread::sleep(Duration::from_secs(2));
