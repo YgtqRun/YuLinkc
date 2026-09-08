@@ -590,10 +590,19 @@ body,
 body {
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   color: #1b1b1b;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --hairline: 1px solid rgba(0, 0, 0, 0.07);
 }
 .page {
   height: 100vh;
-  padding: 10px;
+  padding: var(--space-2);
 }
 .flyout-card {
   position: relative;
@@ -601,8 +610,8 @@ body {
   display: flex;
   flex-direction: column;
   background: #f7f8fb;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 12px;
+  border: var(--hairline);
+  border-radius: var(--radius-md);
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
   overflow: hidden;
 }
@@ -640,7 +649,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px 6px;
+  padding: var(--space-2) var(--space-4) var(--space-1);
   -webkit-app-region: drag;
 }
 .brand-icon {
@@ -714,12 +723,10 @@ body {
 .status {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 0 14px 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.07);
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--hairline);
 }
 .status .dot {
   width: 9px;
@@ -766,8 +773,8 @@ body {
   align-items: center;
   gap: 6px;
   border: none;
-  border-radius: 8px;
-  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
   background: #1d64d8;
   color: #fff;
   font: 600 12px "Segoe UI Variable Text", "Segoe UI", sans-serif;
@@ -784,36 +791,21 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 14px 6px;
+  padding: var(--space-1) var(--space-4) var(--space-2);
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
 }
-.body::-webkit-scrollbar {
-  width: 7px;
-}
-.body::-webkit-scrollbar-track {
-  background: transparent;
-}
-.body::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 4px;
-}
-.body::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
-}
 .group {
-  margin-bottom: 10px;
+  margin-bottom: var(--space-5);
 }
 .group-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: #71767e;
-  margin: 0 2px 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+  margin: var(--space-2) 0 var(--space-1);
 }
 .text-btn {
   border: none;
@@ -830,19 +822,19 @@ body {
 }
 .field-card,
 .switch-card {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.07);
-  border-radius: 10px;
-  padding: 2px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
 }
 .switch-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
   cursor: pointer;
-  margin-bottom: 6px;
+  border-bottom: var(--hairline);
 }
 .switch-card strong,
 .switch-card small,
@@ -861,8 +853,8 @@ body {
 .row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 40px;
+  gap: var(--space-3);
+  min-height: 44px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 .row:last-child {
@@ -1004,11 +996,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  background: #ffffff;
-  border: 1px solid rgba(176, 50, 47, 0.18);
-  border-radius: 10px;
-  padding: 12px;
+  gap: var(--space-3);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: var(--space-3) 0;
 }
 .danger-btn {
   flex: 0 0 auto;
@@ -1029,8 +1021,9 @@ body {
 .foot {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px 10px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  border-top: var(--hairline);
 }
 .foot button {
   border: none;
@@ -1101,7 +1094,7 @@ body {
   .field-card,
   .switch-card,
   .danger-card {
-    background: #2a2c31;
+    background: transparent;
     border-color: rgba(255, 255, 255, 0.07);
   }
   .row > span:first-child,
