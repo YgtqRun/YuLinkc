@@ -388,13 +388,7 @@ onUnmounted(() => {
     >
       <header class="head" data-tauri-drag-region>
         <template v-if="page === 'home'">
-          <div class="brand-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18">
-              <path d="M8.5 3h7M12 3v4" />
-              <path d="M7 7h10l-1.2 12a2 2 0 0 1-2 1.8h-3.6a2 2 0 0 1-2-1.8L7 7z" />
-              <path d="M10 11.5v4M14 11.5v4" />
-            </svg>
-          </div>
+          <img class="brand-logo" src="/yulink.png" alt="" draggable="false" />
           <div class="title-box" data-tauri-drag-region>
             <h1>御连 YuLink</h1>
             <p>校园网自动认证</p>
@@ -659,6 +653,15 @@ body {
   background: linear-gradient(145deg, #3b82f6, #1d5fd6);
   color: #fff;
   box-shadow: 0 3px 8px rgba(29, 95, 214, 0.3);
+}
+.brand-logo {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 .brand-icon svg,
 .login-chip svg {
