@@ -71,12 +71,41 @@ const statusView = ref<StatusView>({ kind: "checking", text: "读取中…" });
 const busy = ref(false);
 const toast = ref<{ text: string; type: string } | null>(null);
 const clearArmed = ref(false);
+const entering = ref(false);
+const closing = ref(false);
 
 let toastTimer: number | undefined;
 let clearTimer: number | undefined;
 let unlistenStatus: UnlistenFn | undefined;
+let unlistenFocus: UnlistenFn | undefined;
+let enterTimer: number | undefined;
+let exitTimer: number | undefined;
 
 const appWindow = getCurrentWindow();
+
+/** 弹窗显示时：从右侧滑入（仅内容动画，不动系统窗口） */
+function playEnter() {
+  if (closing.value) return;
+  entering.value = false;
+  window.requestAnimationFrame(() => {
+    entering.value = true;
+  });
+  if (enterTimer) window.clearTimeout(enterTimer);
+  enterTimer = window.setTimeout(() => {
+    entering.value = false;
+  }, 240);
+}
+
+/** 收起前先向右滑出，动画结束后再隐藏窗口 */
+async function playExit() {
+  if (closing.value) return;
+  closing.value = true;
+  if (exitTimer) window.clearTimeout(exitTimer);
+  exitTimer = window.setTimeout(async () => {
+    closing.value = false;
+    await appWindow.hide();
+  }, 180);
+}
 
 const statusClass = computed(() => {
   const kind = statusView.value.kind;
@@ -314,19 +343,30 @@ function onEscape(e: KeyboardEvent) {
     if (page.value === "settings") {
       page.value = "home";
     } else {
-      appWindow.hide();
+      playExit();
     }
   }
 }
 
 function hideFlyout() {
-  appWindow.hide();
+  playExit();
 }
 
 onMounted(() => {
   getSettings();
   initRuntimeStatus();
   window.addEventListener("keydown", onEscape);
+  // 每次窗口被托盘唤起获得焦点时，重播从右侧滑入动画
+  appWindow
+    .onFocusChanged(({ payload }) => {
+      if (payload && !closing.value) playEnter();
+    })
+    .then((fn) => {
+      unlistenFocus = fn;
+    })
+    .catch(() => {
+      // 焦点事件不可用时忽略
+    });
 });
 
 onUnmounted(() => {
@@ -334,12 +374,15 @@ onUnmounted(() => {
   window.removeEventListener("keydown", onEscape);
   if (toastTimer) window.clearTimeout(toastTimer);
   if (clearTimer) window.clearTimeout(clearTimer);
+  if (enterTimer) window.clearTimeout(enterTimer);
+  if (exitTimer) window.clearTimeout(exitTimer);
+  unlistenFocus?.();
 });
 </script>
 
 <template>
   <div class="page">
-    <div class="flyout-card">
+    <div class="flyout-card" :class="{ 'flyout-in': entering, 'flyout-out': closing }">
       <header class="head" data-tauri-drag-region>
         <template v-if="page === 'home'">
           <div class="brand-icon" aria-hidden="true">
@@ -558,7 +601,7 @@ body {
 }
 .page {
   height: 100vh;
-  padding: 12px;
+  padding: 10px;
 }
 .flyout-card {
   position: relative;
@@ -571,16 +614,42 @@ body {
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
   overflow: hidden;
 }
+.flyout-in {
+  animation: flyout-in 0.22s cubic-bezier(0.16, 0.84, 0.32, 1);
+}
+.flyout-out {
+  animation: flyout-out 0.18s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+}
+@keyframes flyout-in {
+  from {
+    transform: translateX(46px);
+    opacity: 0.25;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes flyout-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(60px);
+    opacity: 0;
+  }
+}
 .head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px 10px;
+  padding: 10px 14px 6px;
   -webkit-app-region: drag;
 }
 .brand-icon {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -603,12 +672,12 @@ body {
 }
 .title-box h1 {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
 }
 .title-box p {
   margin: 1px 0 0;
-  font-size: 11px;
+  font-size: 10.5px;
   color: #7a7f89;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -641,8 +710,8 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 2px 16px 10px;
-  padding: 10px 12px;
+  margin: 0 14px 8px;
+  padding: 8px 10px;
   border-radius: 10px;
   background: #ffffff;
   border: 1px solid rgba(0, 0, 0, 0.07);
@@ -710,11 +779,11 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 2px 16px 8px;
+  padding: 0 14px 6px;
   scrollbar-width: thin;
 }
 .group {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 .group-title {
   display: flex;
@@ -723,7 +792,7 @@ body {
   font-size: 11px;
   font-weight: 600;
   color: #71767e;
-  margin: 2px 4px 6px;
+  margin: 0 2px 4px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
@@ -745,16 +814,16 @@ body {
   background: #ffffff;
   border: 1px solid rgba(0, 0, 0, 0.07);
   border-radius: 10px;
-  padding: 4px 12px;
+  padding: 2px 10px;
 }
 .switch-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   cursor: pointer;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .switch-card strong,
 .switch-card small,
@@ -774,7 +843,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
+  min-height: 40px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 .row:last-child {
@@ -825,13 +894,13 @@ body {
 .sms-input {
   width: 100%;
   text-align: left;
-  padding: 11px 0 5px;
+  padding: 9px 0 4px;
 }
 .expire-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 38px;
+  min-height: 34px;
   font-size: 12px;
   color: #565b64;
 }
@@ -942,12 +1011,12 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px 14px;
+  padding: 6px 14px 10px;
 }
 .foot button {
   border: none;
   border-radius: 8px;
-  padding: 8px 16px;
+  padding: 7px 14px;
   font: 600 12px "Segoe UI Variable Text", "Segoe UI", sans-serif;
   cursor: pointer;
 }
@@ -974,7 +1043,7 @@ body {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 66px;
+  bottom: 58px;
   transform: translateX(-50%);
   max-width: 320px;
   background: #1c1f24;
