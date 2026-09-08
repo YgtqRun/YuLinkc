@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, PhysicalPosition, Wry};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::scheduler::Scheduler;
+use crate::state::RuntimeState;
 use crate::store::{ConfigPaths, ConfigState};
 
 pub const MAIN_WINDOW: &str = "main";
@@ -80,7 +81,63 @@ pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
         .map_err(|e| format!("创建托盘失败: {e}"))?;
 
     app.manage(TrayHandles { autostart_item: autostart });
+    // 应用启动时若有运行状态，立即同步托盘图标颜色
+    if let Some(state) = app.try_state::<RuntimeState>() {
+        if let Some(payload) = state.current() {
+            update_tray_status(app, &payload.kind);
+        }
+    }
     Ok(())
+}
+
+/// 状态变化时更新托盘图标颜色与提示（网络状态可视化）。
+pub fn update_tray_status(app: &AppHandle<Wry>, kind: &str) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let (r, g, b, label) = match kind {
+        "connected" | "ready" => (31, 161, 85, "已连接"),
+        "needs-sms" => (208, 139, 0, "需要动态密码"),
+        "failed" => (216, 59, 59, "登录失败"),
+        "logging-in" => (29, 100, 216, "登录中"),
+        "away-mode" => (120, 125, 132, "离校模式"),
+        "network-down" => (120, 125, 132, "网络未就绪"),
+        _ => (154, 160, 168, "检测中"),
+    };
+    let _ = tray.set_icon(Some(status_dot_icon(r, g, b)));
+    let _ = tray.set_tooltip(Some(format!("御连 YuLink - {label}")));
+}
+
+/// 运行时生成 32x32 状态圆点图标（外白圈 + 状态色）。
+fn status_dot_icon(r: u8, g: u8, b: u8) -> tauri::image::Image<'static> {
+    const SIZE: u32 = 32;
+    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
+    let center = SIZE as f64 / 2.0 - 0.5;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f64 - center;
+            let dy = y as f64 - center;
+            let d = (dx * dx + dy * dy).sqrt();
+            let (alpha, cr, cg, cb) = if d <= 9.0 {
+                (1.0, r as f64, g as f64, b as f64)
+            } else if d <= 11.6 {
+                (1.0, 255.0, 255.0, 255.0)
+            } else if d < 12.6 {
+                let a = 1.0 - (d - 11.6) / 1.0;
+                (a, 255.0, 255.0, 255.0)
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+            if alpha > 0.0 {
+                let idx = ((y * SIZE + x) * 4) as usize;
+                rgba[idx] = cr as u8;
+                rgba[idx + 1] = cg as u8;
+                rgba[idx + 2] = cb as u8;
+                rgba[idx + 3] = (alpha * 255.0).round() as u8;
+            }
+        }
+    }
+    tauri::image::Image::new_owned(rgba, SIZE, SIZE)
 }
 
 /// 显示并聚焦设置主窗口（已隐藏时重新显示），位置先贴到屏幕右下角。

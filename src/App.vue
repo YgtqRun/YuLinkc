@@ -356,10 +356,6 @@ function onEscape(e: KeyboardEvent) {
   }
 }
 
-function hideFlyout() {
-  playExit();
-}
-
 onMounted(() => {
   getSettings();
   initRuntimeStatus();
@@ -420,11 +416,6 @@ onUnmounted(() => {
             <h1>设置</h1>
             <p>认证网址 / 运行模式 / 自启</p>
           </div>
-          <button class="icon-btn" type="button" title="收起" @click="hideFlyout">
-            <svg viewBox="0 0 24 24" width="14" height="14">
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
         </template>
       </header>
 

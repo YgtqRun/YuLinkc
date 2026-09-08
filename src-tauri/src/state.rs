@@ -47,6 +47,7 @@ impl RuntimeState {
         if changed {
             log::info!("状态: {} - {}", payload.kind, payload.text);
             let _ = app.emit(STATUS_EVENT, &payload);
+            crate::tray::update_tray_status(app, &payload.kind);
         }
     }
 
