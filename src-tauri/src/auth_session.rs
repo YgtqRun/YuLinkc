@@ -30,11 +30,6 @@ pub struct LoginOutcome {
 }
 
 impl LoginOutcome {
-    /// 是否需要作废动态密码（门户明确报动态密码/验证码错误）。
-    pub fn invalidates_sms(&self) -> bool {
-        matches!(self.kind, LoginOutcomeKind::SmsCodeFailed(_))
-    }
-
     pub fn is_ok(&self) -> bool {
         self.kind == LoginOutcomeKind::Ok
     }
@@ -82,8 +77,8 @@ pub fn run_login(
         "run": run_id,
         "timeoutMs": 15000,
         "pollMs": 1000,
-        "okWaitMs": 10000,
-        "okWaitCount": 12,
+        "clickDelayMs": 1200,
+        "okWaitCount": 10,
         "selectors": selectors
     });
     let js = build_auth_js(&cfg);

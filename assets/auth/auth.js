@@ -82,6 +82,12 @@
         el.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
+    function sleep(ms) {
+        return new Promise(function (resolve) {
+            setTimeout(resolve, ms);
+        });
+    }
+
     function isAuthCodeError(text) {
         return /动态密码|短信|验证码|auth.?code|sms/i.test(text);
     }
@@ -119,7 +125,10 @@
                 ",isp:" + (isp ? isp.value : "-")
             );
 
-            // 3) 点击登录（与油猴脚本一致：mousedown/mouseup/click + click）
+            // 3) 与油猴脚本一致：填表后稍等再点击登录
+            await sleep(CFG.clickDelayMs || 1200);
+
+            // 4) 点击登录（与油猴脚本一致：mousedown/mouseup/click + click）
             const btn = document.querySelector(SEL.login);
             if (!btn) {
                 report("error", "login-btn-not-found");
@@ -130,8 +139,7 @@
             fireMouse(btn, "click");
             btn.click();
 
-            // 4) 轮询 #message：有文案 → 失败；到期无文案 → ok
-            const startedAt = Date.now();
+            // 5) 轮询 #message：有文案 → 失败；10 次（默认 1s/次）无文案 → ok
             const pollMs = CFG.pollMs || 1000;
             let count = 0;
             const timer = setInterval(function () {
@@ -143,7 +151,7 @@
                     report(isAuthCodeError(text) ? "captcha-error" : "failed", text);
                     return;
                 }
-                if (Date.now() - startedAt >= (CFG.okWaitMs || 10000) || count >= (CFG.okWaitCount || 10)) {
+                if (count >= (CFG.okWaitCount || 10)) {
                     clearInterval(timer);
                     report("ok", "");
                 }

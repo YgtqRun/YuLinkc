@@ -18,16 +18,6 @@ pub enum Medium {
     Other,
 }
 
-impl Medium {
-    /// 按介质取认证页（在调度器中由配置决定，这里只做兜底）。
-    pub fn portal_url(self, prefs: &crate::store::Preferences) -> String {
-        match self {
-            Self::Wireless => prefs.portal_wireless.clone(),
-            _ => prefs.portal_wired.clone(),
-        }
-    }
-}
-
 /// 识别当前承载默认路由的活动网卡介质。
 pub fn detect_medium() -> Result<Medium, String> {
     let mut best_index = 0u32;
