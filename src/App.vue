@@ -726,7 +726,6 @@ body {
   gap: var(--space-3);
   margin: 0;
   padding: var(--space-3) 18px;
-  border-bottom: var(--hairline);
 }
 .status .dot {
   width: 9px;
@@ -1026,7 +1025,6 @@ body {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) 18px var(--space-4);
-  border-top: var(--hairline);
 }
 .foot button {
   border: none;
