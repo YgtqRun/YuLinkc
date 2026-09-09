@@ -40,6 +40,15 @@ pub struct StatusView {
     pub text: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfoView {
+    /// 应用版本（来自 Cargo.toml / tauri.conf.json）。
+    pub version: String,
+    /// Git 远程仓库地址（构建时注入；未配置远程时为空串）。
+    pub repo_url: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountInput {
@@ -296,4 +305,13 @@ pub fn get_runtime_status(
         kind: "checking".into(),
         text: "正在检测网络…".into(),
     })
+}
+
+/// 设置页“关于”区展示的应用版本与仓库信息。
+#[tauri::command]
+pub fn get_app_info(app: AppHandle) -> AppInfoView {
+    AppInfoView {
+        version: app.package_info().version.to_string(),
+        repo_url: env!("YULINK_REPO_URL").to_string(),
+    }
 }

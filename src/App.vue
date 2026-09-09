@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 interface StatusView {
   kind: string;
@@ -27,6 +28,11 @@ interface SettingsView {
   portalWireless: string;
   portalWired: string;
   status: StatusView;
+}
+
+interface AppInfo {
+  version: string;
+  repoUrl: string;
 }
 
 interface AccountInput {
@@ -76,6 +82,7 @@ const autoRelogin = ref(true);
 const quitAfterFirstConnect = ref(false);
 const portalWireless = ref("");
 const portalWired = ref("");
+const appInfo = ref<AppInfo>({ version: "", repoUrl: "" });
 const statusView = ref<StatusView>({ kind: "checking", text: "读取中…" });
 const busy = ref(false);
 const toast = ref<{ text: string; type: string } | null>(null);
@@ -91,6 +98,12 @@ let enterTimer: number | undefined;
 let exitTimer: number | undefined;
 
 const appWindow = getCurrentWindow();
+
+const repoDisplay = computed(() => {
+  const url = appInfo.value.repoUrl;
+  if (!url) return "本地仓库（未配置远程）";
+  return url.replace(/^https?:\/\//i, "").replace(/\.git$/, "");
+});
 
 /** Rust 在窗口显示前调用：先把卡片放到右侧外并隐藏，避免首帧闪现 */
 function prepareShow() {
@@ -430,6 +443,21 @@ function onEscape(e: KeyboardEvent) {
   }
 }
 
+async function loadAppInfo() {
+  try {
+    appInfo.value = await invoke<AppInfo>("get_app_info");
+  } catch {
+    // 信息通道不可用时保持占位显示
+  }
+}
+
+function openRepo() {
+  const url = appInfo.value.repoUrl;
+  if (/^https?:\/\//i.test(url)) {
+    openUrl(url).catch(() => {});
+  }
+}
+
 /** 双击头部是 Windows 最大化惯例；悬浮窗不应放大，兜底还原 */
 function preventMaximize() {
   appWindow.unmaximize().catch(() => { });
@@ -438,6 +466,7 @@ function preventMaximize() {
 onMounted(() => {
   getSettings();
   initRuntimeStatus();
+  loadAppInfo();
   window.addEventListener("keydown", onEscape);
   // 供 Rust 侧在窗口稳定显示后调用：__yulinkEnter / __yulinkExit
   (window as unknown as Record<string, unknown>).__yulinkPrepare = prepareShow;
@@ -625,6 +654,36 @@ onUnmounted(() => {
             <button class="danger-btn" type="button" :disabled="busy" @click="clearAll">
               {{ clearArmed ? "再点一次确认" : "清空数据" }}
             </button>
+          </div>
+        </section>
+
+        <section class="group">
+          <div class="group-title">关于</div>
+          <div class="field-card">
+            <div class="row">
+              <span>名称</span>
+              <span class="about-value">
+                <img class="about-logo" src="/yulink.png" alt="YuLink" draggable="false" />
+                御连 YuLink
+              </span>
+            </div>
+            <div class="row">
+              <span>版本</span>
+              <span class="about-value">v{{ appInfo.version || "0.1.0" }}</span>
+            </div>
+            <div
+              class="row about-repo"
+              :class="{ clickable: /^https?:/i.test(appInfo.repoUrl) }"
+              @click="openRepo"
+            >
+              <span>仓库</span>
+              <span class="about-value">
+                <template v-if="/^https?:/i.test(appInfo.repoUrl)">
+                  {{ repoDisplay }} ↗
+                </template>
+                <template v-else>本地仓库（未配置远程）</template>
+              </span>
+            </div>
           </div>
         </section>
       </main>
@@ -991,6 +1050,41 @@ body {
   flex: 0 0 74px;
   font-size: 12px;
   color: #565b64;
+}
+
+.row .about-value {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1b1b1b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row .about-value .about-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  flex: none;
+  user-select: none;
+}
+
+.row.about-repo {
+  cursor: default;
+}
+
+.row.about-repo.clickable {
+  cursor: pointer;
+}
+
+.row.about-repo.clickable .about-value {
+  color: #1d64d8;
 }
 
 .row input,

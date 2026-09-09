@@ -34,6 +34,7 @@ pub fn run() {
             commands::set_autostart,
             commands::login_now,
             commands::get_runtime_status,
+            commands::get_app_info,
         ])
         .on_window_event(|window, event| {
             // 主窗口点关闭时隐藏到托盘，而不是退出进程
