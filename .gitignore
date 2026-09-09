@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 本地设计文档与联调素材（不纳入版本库，保留在本地工作区）
+实现方案.md
+登录脚本.js
+docs/
+mock/
+scripts/
+yulink.png
