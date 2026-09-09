@@ -1,7 +1,122 @@
-# Tauri + Vue + TypeScript
+# 御连 YuLink
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+面向校园网的 Windows 常驻自动认证程序。开机后无需打开浏览器，程序会用系统内置的
+WebView2 在后台访问校园网认证页，像油猴脚本一样自动填表登录；断线后自动恢复，
+已在线时能识别“注销按钮”并跳过重复登录。
 
-## Recommended IDE Setup
+> 当前版本：v1.0.0
 
-- [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+> ⚠️ **仅支持暨阳学院的校园网认证**。默认认证页（无线 `http://172.26.255.2/`、
+> 有线 `http://172.26.255.3/`）及页面元素选择器均针对暨阳学院门户定制；
+> 其他校园网环境需要自行修改认证网址与 `selectors` 才能使用。
+
+## 功能特性
+
+- **后台自动登录**：隐藏 WebView2 加载门户 → 注入填表脚本 → 本地信标回传结果；
+  不对门户接口做逆向，不依赖抓包/POST 模拟。
+- **介质自适应**：识别当前承载默认路由的网卡——Wi-Fi 走无线认证页
+  `http://172.26.255.2/`，有线走 `http://172.26.255.3/`（可在设置中修改）。
+- **实时网络感知**：8 秒轻量心跳探测网络翻转，连续失败才认定离线，避免单次
+  抖动误触发登录。
+- **避免重复登录**：认证页没有登录表单但存在“注销”按钮时，判定为已在线，
+  不重复提交登录。
+- **登录失败自动重试**：失败按 30s → 60s → 120s → 240s 指数退避重试，
+  动态密码在有效期内保留。
+- **可信判定**：页面判定成功只作为候选，Rust 外网探测通过后才显示“已连接”。
+- **凭据加密**：账号密码与动态密码用 Windows DPAPI 加密落盘，日志不写明文。
+- **本地时区日志**：`%APPDATA%\com.tauri-app.yulink\logs\yulink.log`，自动轮转。
+
+## 安装
+
+从 [Releases](https://github.com/YgtqRun/YuLinkc/releases) 下载 v1.0.0 产物：
+
+- `yulink_1.0.0_x64-setup.exe`（NSIS 安装包，推荐）
+- `yulink_1.0.0_x64_en-US.msi`（MSI）
+- `yulink.v1.0.0.exe`（免安装单文件）
+
+前置依赖：Windows 10/11 自带的 WebView2 Runtime（绝大多数系统已内置）。
+
+## 快速开始
+
+1. 连接到校园网（无线或有线，认证前网络即可）。
+2. 左键单击托盘图标打开设置。
+3. 填写账号、密码（运营商固定为中国电信）。
+4. 填写电信短信下发的 6 位动态密码，选择有效期（默认 27 小时）。
+5. 点“保存凭据”，再点“立即登录”；或保存后等待自动登录。
+
+状态点颜色：绿 = 已连接，黄 = 需要动态密码，蓝 = 登录中，红 = 失败/异常。
+
+## 托盘与设置
+
+- 左键单击托盘：打开/收起设置窗口。
+- 右键菜单：**立即登录** / **退出**。
+
+设置页包含：
+
+| 设置项 | 说明 |
+| --- | --- |
+| 账号 / 密码 / 动态密码 | 校园网凭据；动态密码可设置 1/3/9/18/27 小时、永久或自定义 |
+| 离校模式 | 暂停一切自动认证与手动验证 |
+| 开机自启动 | 登录 Windows 后自动运行 |
+| 显示认证窗口 | 勾选后登录时可见门户页面；默认隐藏 |
+| 断网自动重试 | 开：掉线后一直自动重登；关：仅开机后自动登录到首次成功，之后只保留心跳检测与状态提示 |
+| 连接成功后退出 | 开机后首次连接成功即退出程序；开启时“断网自动重试”置灰（互斥） |
+| 无线/有线认证网址 | 按介质选择认证页 |
+
+## 登录判定流程
+
+```text
+外网探活失败（多端点，连续 2 次）
+        │
+        ▼
+按介质探测认证页可达性
+        │
+        ▼
+加载认证页（隐藏 WebView2）
+        │
+        ├─ 出现登录表单 (#f1_div) → 自动填表登录 → Rust 外网确认 → 已连接
+        ├─ 无表单但有注销按钮 → 已在线，不重复登录
+        └─ 两者皆无 → 刷新重试一次，仍失败则指数退避
+```
+
+门户改版时可修改配置中的 `selectors`，无需改程序。
+
+## 数据与日志位置
+
+- 配置：`%APPDATA%\com.tauri-app.yulink\config.json`（凭据为 DPAPI 密文）
+- 日志：`%APPDATA%\com.tauri-app.yulink\logs\yulink.log`
+- 若日志初始化失败，会在配置目录生成 `logger-init-error.txt` 记录原因
+
+## 从源码构建
+
+环境要求：Rust stable、Node.js 18+、WebView2 Runtime。
+
+```powershell
+npm install
+npm run tauri dev     # 开发调试
+npm run tauri build   # 打包
+```
+
+打包产物位于 `src-tauri\target\release\bundle\`。
+
+> 注意：仓库不纳入本地联调素材（`docs/`、`mock/`、`scripts/`、`实现方案.md`、
+> `登录脚本.js`）。其中 `mock/wired.html` 与 `mock/wireless.html` 是 POC/E2E
+> 的编译依赖，克隆仓库后需自行放置这两份文件（或保留本地工作区副本）才能完整构建。
+
+## 仓库结构
+
+```text
+src/                     Vue 3 设置界面
+src-tauri/src/           调度、网络探活、认证窗口、登录会话、配置存储
+assets/auth/auth.js      认证页注入脚本（填表/注销按钮识别）
+public/                  前端静态资源
+```
+
+## 常见问题
+
+- **动态密码过期**：设置页会提示补码；登录失败不会自动清除动态密码，有效期内可重试。
+- **提示“认证页未返回登录表单”**：多为门户处于已在线/中间态，程序不会重复登录。
+- **提示“未检测到校园网认证页”**：请确认已连接校园网无线/有线，而非仅连接外网热点。
+- **登录后仍显示未确认**：检查外网探活地址是否被校园网策略拦截，可修改
+  `externalProbeUrl` 后重启。
+- **想观察登录过程**：在设置中开启“显示认证窗口”。
