@@ -529,9 +529,6 @@ onUnmounted(() => {
 
       <footer class="foot">
         <span class="spacer"></span>
-        <button v-if="page === 'settings'" class="ghost" type="button" :disabled="busy" @click="page = 'home'">
-          返回
-        </button>
         <button v-if="page === 'settings'" class="primary" type="button" :disabled="busy" @click="saveSettings">
           {{ busy ? "保存中…" : "保存设置" }}
         </button>
@@ -899,7 +896,7 @@ body {
   font: 13px "Segoe UI Variable Text", "Segoe UI", sans-serif;
   color: #1b1b1b;
   outline: none;
-  text-align: right;
+  text-align: left;
 }
 
 .url-row input {

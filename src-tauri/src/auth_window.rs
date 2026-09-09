@@ -38,7 +38,7 @@ impl AuthWindowVisibility {
     pub fn describe(self) -> &'static str {
         match self {
             Self::Visible => "屏幕内显示（开发调试）",
-            Self::Hidden => "屏幕外隐藏（生产默认）",
+            Self::Hidden => "完全隐藏（生产默认）",
         }
     }
 }
@@ -70,11 +70,12 @@ pub fn create_auth_window(
                 .skip_taskbar(false)
                 .focused(true),
             AuthWindowVisibility::Hidden => builder
-                .position(-32000.0, -32000.0)
                 .decorations(false)
                 .resizable(false)
                 .skip_taskbar(true)
-                .focused(false),
+                // 主窗口隐藏时前端 JS 均正常执行，证明隐藏 WebView 可运行注入脚本；
+                // 认证窗口直接不可见，彻底避免离屏坐标在部分机器上仍会显示的问题。
+                .visible(false),
         };
 
         let result = if cfg!(debug_assertions) {
