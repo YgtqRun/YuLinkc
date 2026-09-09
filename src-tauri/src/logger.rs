@@ -84,7 +84,9 @@ impl Log for FileLogger {
         let Some(file) = inner.file.as_mut() else {
             return;
         };
-        let ts = OffsetDateTime::now_utc()
+        // 使用本地时区时间（获取失败时回退 UTC，避免日志中断）。
+        let ts = OffsetDateTime::now_local()
+            .unwrap_or_else(|_| OffsetDateTime::now_utc())
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| "unknown-time".into());
         let line = format!(

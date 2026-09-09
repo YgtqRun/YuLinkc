@@ -24,6 +24,9 @@ pub struct SettingsView {
     pub sms_status_text: String,
     pub autostart: bool,
     pub away_mode: bool,
+    pub show_auth_window: bool,
+    pub auto_relogin: bool,
+    pub quit_after_first_connect: bool,
     pub portal_wireless: String,
     pub portal_wired: String,
     pub status: StatusView,
@@ -63,6 +66,9 @@ pub struct SaveSettingsRequest {
     pub portal_wireless: Option<String>,
     pub portal_wired: Option<String>,
     pub away_mode: Option<bool>,
+    pub show_auth_window: Option<bool>,
+    pub auto_relogin: Option<bool>,
+    pub quit_after_first_connect: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,6 +122,9 @@ fn build_view(cfg: &AppConfig) -> SettingsView {
         sms_status_text: cfg.sms_status_text(now),
         autostart: cfg.preferences.autostart,
         away_mode: cfg.preferences.away_mode,
+        show_auth_window: cfg.preferences.show_auth_window,
+        auto_relogin: cfg.preferences.auto_relogin,
+        quit_after_first_connect: cfg.preferences.quit_after_first_connect,
         portal_wireless: cfg.preferences.portal_wireless.clone(),
         portal_wired: cfg.preferences.portal_wired.clone(),
         status: StatusView {
@@ -197,6 +206,15 @@ pub fn save_settings(
     if let Some(away) = req.away_mode {
         cfg.preferences.away_mode = away;
     }
+    if let Some(show) = req.show_auth_window {
+        cfg.preferences.show_auth_window = show;
+    }
+    if let Some(auto) = req.auto_relogin {
+        cfg.preferences.auto_relogin = auto;
+    }
+    if let Some(quit) = req.quit_after_first_connect {
+        cfg.preferences.quit_after_first_connect = quit;
+    }
 
     save_config(&cfg, &paths, &config_state)?;
     // 配置变更后让调度器立即按新配置巡检（离校模式/网址立即生效）
@@ -268,7 +286,12 @@ pub fn login_now(
 }
 
 #[tauri::command]
-pub fn get_runtime_status(state: State<'_, RuntimeState>) -> StatusPayload {
+pub fn get_runtime_status(
+    scheduler: State<'_, Scheduler>,
+    state: State<'_, RuntimeState>,
+) -> StatusPayload {
+    // 查询状态即触发一次即时完整巡检（异步非阻塞），让界面/托盘尽快贴近真实网络。
+    scheduler.check_now();
     state.current().unwrap_or(StatusPayload {
         kind: "checking".into(),
         text: "正在检测网络…".into(),

@@ -7,7 +7,7 @@
 //!   YULINK_POC          = 1 启用 POC（未设置时走正常应用逻辑）
 //!   YULINK_POC_MODE     = success | fail | captcha | wired | all
 //!   YULINK_POC_RUNS     = 每轮循环次数（用于创建/销毁压力测试）
-//!   YULINK_AUTH_VISIBLE = 0 强制隐藏 / 1 强制显示认证窗口（详见 auth_window.rs）
+//! 认证窗口显示策略由配置（设置页“显示认证窗口”）驱动，不再使用环境变量。
 
 use std::{
     env,
@@ -22,6 +22,7 @@ use crate::bridge::{read_request_head, spawn_beacon_listener, BeaconEvent};
 use crate::auth_window::{
     cleanup_auth_windows, create_auth_window, destroy_auth_window, AuthWindowVisibility,
 };
+use crate::store::ConfigState;
 use tauri::{AppHandle, Manager};
 
 const WIRELESS_HTML: &str = include_str!("../../mock/wireless.html");
@@ -98,7 +99,17 @@ pub fn run_poc(app: &AppHandle) -> Result<(), String> {
         let _ = main.hide();
     }
 
-    let visibility = AuthWindowVisibility::resolve();
+    // 显示策略走配置：默认隐藏；联调可在设置页开启后重跑 POC。
+    let show_auth = match app.try_state::<ConfigState>() {
+        Some(state) => state
+            .0
+            .lock()
+            .ok()
+            .map(|cfg| cfg.preferences.show_auth_window)
+            .unwrap_or(false),
+        None => false,
+    };
+    let visibility = AuthWindowVisibility::from_config(show_auth);
     println!("[POC] 认证窗口显示策略: {}", visibility.describe());
 
     let mode = env::var("YULINK_POC_MODE").unwrap_or_else(|_| "all".to_string());

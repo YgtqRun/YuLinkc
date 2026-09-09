@@ -1,4 +1,6 @@
-//! 系统托盘：左键打开设置窗口，右键菜单提供 打开设置 / 立即登录 / 开机自启 / 退出。
+//! 系统托盘：左键打开设置窗口，右键菜单提供 立即登录 / 退出。
+//! （“打开设置”与“开机自启”从右键菜单移除：左键点击即可打开设置，
+//! 开机自启保留在设置页内。）
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -22,25 +24,13 @@ const EXIT_WAIT_MS: u64 = 230;
 /// 退出动画进行中标记，避免焦点丢失与托盘点击重复触发
 static EXIT_PENDING: AtomicBool = AtomicBool::new(false);
 
-/// 需要动态改文案的菜单项句柄。
-pub struct TrayHandles {
-    pub autostart_item: MenuItem<Wry>,
-}
-
 pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
-    let open = MenuItem::with_id(app, "open", "打开设置", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
     let login = MenuItem::with_id(app, "login", "立即登录", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
-
-    let auto_state = app.autolaunch().is_enabled().unwrap_or(false);
-    let auto_label = if auto_state { "开机自启：开" } else { "开机自启：关" };
-    let autostart = MenuItem::with_id(app, "autostart", auto_label, true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
         .map_err(|e| e.to_string())?;
 
-    let menu = Menu::with_items(app, &[&open, &login, &autostart, &quit])
+    let menu = Menu::with_items(app, &[&login, &quit])
         .map_err(|e| e.to_string())?;
     let icon = app
         .default_window_icon()
@@ -53,7 +43,6 @@ pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => show_settings(app),
             "login" => {
                 if let Some(sched) = app.try_state::<Scheduler>() {
                     sched.request_login();
@@ -63,7 +52,6 @@ pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
                 }
                 show_settings(app);
             }
-            "autostart" => toggle_autostart(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -80,7 +68,6 @@ pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
         .build(app)
         .map_err(|e| format!("创建托盘失败: {e}"))?;
 
-    app.manage(TrayHandles { autostart_item: autostart });
     // 应用启动时若有运行状态，立即同步托盘图标颜色
     if let Some(state) = app.try_state::<RuntimeState>() {
         if let Some(payload) = state.current() {
@@ -239,20 +226,7 @@ fn place_bottom_right(win: &tauri::WebviewWindow<Wry>) {
     let _ = win.set_position(PhysicalPosition::new(x.max(0), y.max(0)));
 }
 
-fn toggle_autostart(app: &AppHandle<Wry>) {
-    let auto = app.autolaunch();
-    let enabled = auto.is_enabled().unwrap_or(false);
-    match set_autostart(app, !enabled) {
-        Ok(()) => {
-            info!("开机自启已{}", if enabled { "关闭" } else { "开启" });
-        }
-        Err(e) => {
-            warn!("切换开机自启失败: {e}");
-        }
-    }
-}
-
-/// 设置开机自启并同步持久化配置与托盘菜单文案。供托盘与 UI 命令共用。
+/// 设置开机自启并同步持久化配置。供 UI 设置页调用。
 pub(crate) fn set_autostart(app: &AppHandle<Wry>, enabled: bool) -> Result<(), String> {
     let auto = app.autolaunch();
     let result = if enabled {
@@ -269,12 +243,6 @@ pub(crate) fn set_autostart(app: &AppHandle<Wry>, enabled: bool) -> Result<(), S
         if let Err(e) = cfg.save(&paths.dir) {
             warn!("保存开机自启配置失败: {e}");
             return Err(format!("保存开机自启配置失败: {e}"));
-        }
-    }
-    if let Some(handles) = app.try_state::<TrayHandles>() {
-        let label = if enabled { "开机自启：开" } else { "开机自启：关" };
-        if let Err(e) = handles.autostart_item.set_text(label) {
-            warn!("更新托盘菜单文案失败: {e}");
         }
     }
     Ok(())

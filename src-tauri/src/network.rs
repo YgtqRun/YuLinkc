@@ -83,48 +83,73 @@ fn medium_of(iftype: u32) -> Medium {
     }
 }
 
-/// 执行 HTTP GET（仅 http://），返回 (状态码, 正文前 8KB)。失败返回 None。
+/// 执行 HTTP GET（仅 http://），返回 (状态码, 正文前 8KB)。
+/// 自动跟随最多 4 次 3xx 重定向。失败返回 None。
 pub fn http_get(url: &str, timeout: Duration) -> Option<(u16, String)> {
-    let Some((host, port, path)) = parse_http_url(url) else {
-        log::warn!("探活 URL 无法解析（仅支持 http）: {url}");
-        return None;
-    };
-    let addr = match (host.as_str(), port).to_socket_addrs().ok().and_then(|mut it| it.next()) {
-        Some(a) => a,
-        None => return None,
-    };
-    let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
-    let _ = stream.set_read_timeout(Some(timeout));
-    let req = format!(
-        "GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-    );
-    if stream.write_all(req.as_bytes()).is_err() {
-        return None;
-    }
-    let mut body = Vec::with_capacity(4096);
-    let mut chunk = [0u8; 4096];
-    loop {
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                body.extend_from_slice(&chunk[..n]);
-                if body.len() >= 8192 {
-                    break;
-                }
-            }
-            Err(_) => break,
+    http_get_limit(url, timeout, 8192)
+}
+
+/// 执行 HTTP GET 并读取最多 `max_bytes` 字节正文，自动跟随最多 4 次 3xx 重定向。
+pub fn http_get_limit(
+    url: &str,
+    timeout: Duration,
+    max_bytes: usize,
+) -> Option<(u16, String)> {
+    let mut current = url.to_string();
+    for _hop in 0..5 {
+        let Some((host, port, path)) = parse_http_url(&current) else {
+            log::warn!("探活 URL 无法解析（仅支持 http）: {current}");
+            return None;
+        };
+        let addr =
+            match (host.as_str(), port).to_socket_addrs().ok().and_then(|mut it| it.next()) {
+                Some(a) => a,
+                None => return None,
+            };
+        let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+        let _ = stream.set_read_timeout(Some(timeout));
+        let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+        if stream.write_all(req.as_bytes()).is_err() {
+            return None;
         }
+        let mut body = Vec::with_capacity(4096);
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    body.extend_from_slice(&chunk[..n]);
+                    if body.len() >= max_bytes {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let text = String::from_utf8_lossy(&body).into_owned();
+        let Some(status) = text
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|s| s.parse::<u16>().ok())
+        else {
+            return None;
+        };
+        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+            if let Some(next) =
+                find_header(&text, "location").and_then(|loc| resolve_url(&current, &loc))
+            {
+                current = next;
+                continue;
+            }
+        }
+        return Some((status, text));
     }
-    let text = String::from_utf8_lossy(&body).into_owned();
-    let status = text
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|s| s.parse::<u16>().ok());
-    status.map(|code| (code, text))
+    log::warn!("探活 URL 重定向次数过多: {url}");
+    None
 }
 
 /// 认证页可达性：任何 HTTP 响应（2xx-4xx）都算可达。
@@ -132,15 +157,73 @@ pub fn http_ok(url: &str, timeout: Duration) -> bool {
     matches!(http_get(url, timeout), Some((code, _)) if (200..500).contains(&code))
 }
 
-/// 外网探活：不能只认"有响应"——认证前的劫持页也会回 200。
-/// 默认探活地址是微软连通性测试页，需正文命中；204 空响应也算通过。
-pub fn external_ok(url: &str, timeout: Duration) -> bool {
+/// 外网探活详情：返回 (是否在线, 原因说明)。失败原因会进入日志，便于定位误判。
+pub fn external_probe(url: &str, timeout: Duration) -> (bool, String) {
     match http_get(url, timeout) {
-        Some((204, _)) => true,
+        None => (false, format!("连接失败或超时（{timeout:?}）")),
+        Some((204, _)) => (true, "HTTP 204".into()),
         Some((200, body)) => {
-            body.contains("Microsoft Connect Test") || body.trim().is_empty()
+            if body.contains("Microsoft Connect Test") {
+                (true, "HTTP 200 命中探活文本".into())
+            } else if body.trim().is_empty() {
+                (true, "HTTP 200 空正文".into())
+            } else {
+                (
+                    false,
+                    format!("HTTP 200 但正文非预期（{}）", first_text_snippet(&body)),
+                )
+            }
         }
-        _ => false,
+        Some((code, body)) => (
+            false,
+            format!("HTTP {code}（{}）", first_text_snippet(&body)),
+        ),
+    }
+}
+
+/// 取正文第一行非空内容（截断，用于日志）。
+fn first_text_snippet(body: &str) -> String {
+    body.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(120)
+        .collect()
+}
+
+/// 大小写不敏感地查找响应头字段（请求/响应行之外的 Header 行）。
+fn find_header(text: &str, name: &str) -> Option<String> {
+    let lower = name.to_ascii_lowercase();
+    text.lines()
+        .skip(1)
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            if key.trim().to_ascii_lowercase() == lower {
+                Some(value.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// 解析 Location 头：绝对 http:// 直接使用；其余基于当前 URL 简单拼接。
+fn resolve_url(base: &str, location: &str) -> Option<String> {
+    if location.starts_with("http://") {
+        return Some(location.to_string());
+    }
+    let (host, port, path) = parse_http_url(base)?;
+    let authority = if port == 80 {
+        host
+    } else {
+        format!("{host}:{port}")
+    };
+    let origin = format!("http://{authority}");
+    if location.starts_with('/') {
+        Some(format!("{origin}{location}"))
+    } else {
+        let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        Some(format!("{origin}{dir}/{location}"))
     }
 }
 

@@ -69,6 +69,11 @@ pub fn run() {
         if let Err(e) = logger::FileLogger::init(&config_dir.join("logs"), log::LevelFilter::Info)
         {
             eprintln!("[yulink] 日志初始化失败: {e}");
+            // GUI 下看不到 stderr，把失败原因落到配置目录，便于事后排查。
+            let _ = std::fs::write(
+                config_dir.join("logger-init-error.txt"),
+                format!("[yulink] 日志初始化失败: {e}\r\n"),
+            );
         }
 
         // 配置：加载默认值或磁盘配置，注册为全局状态

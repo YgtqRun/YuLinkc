@@ -49,6 +49,8 @@ pub struct Selectors {
     pub dyn_pass: String,
     pub login: String,
     pub message: String,
+    /// 已登录页的“注销”按钮 XPath：登录表单不存在时用它判断会话是否已在线。
+    pub logout: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,6 +83,13 @@ pub struct Preferences {
     pub check_interval_online_sec: u64,
     pub check_interval_offline_sec: u64,
     pub login_max_retries: u32,
+    /// 设置页“显示认证窗口”：true 显示（调试用），false 隐藏窗口自动运行。
+    pub show_auth_window: bool,
+    /// 设置页“断网自动重试”：true = 掉线后一直自动重登；
+    /// false = 只在开机/启动后自动登录到第一次成功，之后掉线只保留心跳/状态提示。
+    pub auto_relogin: bool,
+    /// 设置页“连接成功后退出”：开机后第一次连接成功即关闭软件，不再维护后续事务。
+    pub quit_after_first_connect: bool,
 }
 
 impl Default for AppConfig {
@@ -104,6 +113,7 @@ impl Default for Selectors {
             dyn_pass: "#dynPass".into(),
             login: "#login_btn".into(),
             message: "#message".into(),
+            logout: "//*[@id=\"edit_body\"]/div[2]/div[2]/form/input".into(),
         }
     }
 }
@@ -140,6 +150,10 @@ impl Default for Preferences {
             check_interval_online_sec: 120,
             check_interval_offline_sec: 30,
             login_max_retries: 3,
+            // 默认隐藏认证窗口；联调/测试在设置页开启“显示认证窗口”。
+            show_auth_window: false,
+            auto_relogin: true,
+            quit_after_first_connect: false,
         }
     }
 }
@@ -152,7 +166,27 @@ impl AppConfig {
             return Ok(Self::default());
         }
         let raw = fs::read_to_string(&path).map_err(|e| format!("读取配置失败: {e}"))?;
-        serde_json::from_str(&raw).map_err(|e| format!("解析配置失败: {e}"))
+        // 旧配置文件缺少新增偏好项时，先按默认值补齐再反序列化（否则 bool 缺失会变 false）。
+        let mut root: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| format!("解析配置失败: {e}"))?;
+        if let Some(p) = root.get_mut("preferences") {
+            if p.get("showAuthWindow").is_none() {
+                p["showAuthWindow"] = serde_json::json!(false);
+            }
+            if p.get("autoRelogin").is_none() {
+                p["autoRelogin"] = serde_json::json!(true);
+            }
+            if p.get("quitAfterFirstConnect").is_none() {
+                p["quitAfterFirstConnect"] = serde_json::json!(false);
+            }
+        }
+        let mut cfg: AppConfig = serde_json::from_value(root)
+            .map_err(|e| format!("解析配置失败: {e}"))?;
+        // 旧配置文件没有 logout 字段时补默认值（serde(default) 会给空串）。
+        if cfg.selectors.logout.is_empty() {
+            cfg.selectors.logout = Selectors::default().logout;
+        }
+        Ok(cfg)
     }
 
     pub fn save(&self, dir: &Path) -> Result<(), String> {

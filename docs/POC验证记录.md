@@ -23,8 +23,8 @@ $env:YULINK_POC="1"; $env:YULINK_POC_MODE="all"; npm run tauri dev
 # 创建/销毁 10 次
 $env:YULINK_POC="1"; $env:YULINK_POC_MODE="success"; $env:YULINK_POC_RUNS="10"; npm run tauri dev
 
-# 强制显示/隐藏认证窗口（覆盖默认策略）
-$env:YULINK_AUTH_VISIBLE="1"; $env:YULINK_POC="1"; $env:YULINK_POC_MODE="all"; npm run tauri dev
+# 认证窗口显示策略由配置控制（默认隐藏；可在设置页开启“显示认证窗口”后重跑）
+$env:YULINK_POC="1"; $env:YULINK_POC_MODE="all"; npm run tauri dev
 ```
 
 > 注意：WebView2 子进程在受管沙箱内无法启动（窗口不导航、eval 无响应），
@@ -35,14 +35,13 @@ $env:YULINK_AUTH_VISIBLE="1"; $env:YULINK_POC="1"; $env:YULINK_POC_MODE="all"; n
 
 认证页窗口的显示策略作为正式配置落在 `src-tauri/src/auth_window.rs`：
 
-| 条件 | 认证窗口形态 |
+| 配置（设置页“显示认证窗口”） | 认证窗口形态 |
 |---|---|
-| debug 构建（默认） | 屏幕内显示（带边框可调、带焦点），开发/联调时可直接观察真实页面 |
-| release 构建（默认） | 屏幕外隐藏（-32000,-32000、无边框、不进任务栏，保持 visible 状态） |
-| `YULINK_AUTH_VISIBLE=1/0` | 强制覆盖，例如 debug 下模拟生产隐藏路径，或 release 下临时显示排障 |
+| 关闭（默认） | 隐藏窗口（无边框、不进任务栏，保持 visible 状态规避 eval no-op） |
+| 开启 | 屏幕内显示（带边框可调、带焦点），开发/联调时可直接观察真实页面 |
 
-POC 用 `YULINK_AUTH_VISIBLE=0` 跑过隐藏路径（4/4 通过）；未设置变量时 debug
-跑过显示路径（1/1 通过）。注入脚本与回传链路在两种形态下行为一致。
+认证窗口显示策略不再使用环境变量，统一走配置。默认隐藏路径已跑通（4/4）；
+在设置页开启“显示认证窗口”后跑显示路径（1/1 通过）。注入脚本与回传链路在两种形态下行为一致。
 
 ## 验证到的事实
 

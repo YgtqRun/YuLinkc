@@ -32,7 +32,9 @@
             isp: "#f1_div select[name='ISP_select']",
             dynPass: "#dynPass",
             login: "#login_btn",
-            message: "#message"
+            message: "#message",
+            // 已登录页的“注销”按钮：表单不存在但注销按钮存在 = 会话已在线。
+            logout: "//*[@id=\"edit_body\"]/div[2]/div[2]/form/input"
         },
         CFG.selectors || {}
     );
@@ -62,21 +64,38 @@
         } catch (e) { /* 忽略 */ }
     }
 
-    // ===== 等待元素 =====
-    function waitFor(selector, timeoutMs) {
+    // ===== 等待“登录表单”或“注销按钮”任一出现 =====
+    // resolve "form" → 继续走油猴一致的填表登录流程；
+    // resolve "online" → 已登录，不需要重复登录，直接上报。
+    function waitForFormOrOnline(formSelector, logoutXpath, timeoutMs) {
         timeoutMs = timeoutMs || 15000;
         return new Promise(function (resolve, reject) {
             const start = Date.now();
             const timer = setInterval(function () {
-                const el = document.querySelector(selector);
-                if (el) {
+                if (document.querySelector(formSelector)) {
                     clearInterval(timer);
-                    resolve(el);
+                    resolve("form");
                     return;
+                }
+                if (logoutXpath) {
+                    try {
+                        const node = document.evaluate(
+                            logoutXpath,
+                            document,
+                            null,
+                            XPathResult.FIRST_ORDERED_NODE_TYPE,
+                            null
+                        ).singleNodeValue;
+                        if (node) {
+                            clearInterval(timer);
+                            resolve("online");
+                            return;
+                        }
+                    } catch (e) { /* XPath 无效时忽略 */ }
                 }
                 if (Date.now() - start > timeoutMs) {
                     clearInterval(timer);
-                    reject(new Error("timeout: " + selector));
+                    reject(new Error("timeout: " + formSelector));
                 }
             }, 150);
         });
@@ -111,8 +130,23 @@
         report("started", "url:" + location.href);
 
         try {
-            // 1) 等待认证表单
-            await waitFor(SEL.root, CFG.timeoutMs || 15000);
+            // 1) 等待登录表单或注销按钮：
+            //    - 登录表单存在 → 继续填表登录（与油猴脚本一致）；
+            //    - 注销按钮存在 → 会话已在线，不重复登录。
+            const pageState = await waitForFormOrOnline(
+                SEL.root,
+                SEL.logout,
+                CFG.timeoutMs || 15000
+            );
+            if (pageState === "online") {
+                report("online", "logout-button");
+                return;
+            }
+            // 仅检测模式（自动重试已关闭）：确认登录表单存在即可，不执行填表登录。
+            if (pageState === "form" && CFG.detectOnly) {
+                report("form-present", "detect-only");
+                return;
+            }
 
             // 2) 账号 / 密码 / 运营商 / 动态密码
             const accInput = document.querySelector(SEL.account);

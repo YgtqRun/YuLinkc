@@ -1,9 +1,8 @@
 //! 认证页（WebView2 窗口）生命周期与显示策略。
 //!
-//! 显示策略配置（优先级从高到低）：
-//! 1. 环境变量 `YULINK_AUTH_VISIBLE`：`1/true/show` 显示，`0/false/hidden` 隐藏；
-//! 2. debug 构建默认**显示**认证页（方便开发/联调时观察真实页面）；
-//! 3. release 构建默认**隐藏**（屏幕外可见，规避隐藏 WebView eval no-op，见实现方案 §5.2）。
+//! 显示策略完全由配置（设置页“显示认证窗口”）驱动：
+//! 开启时正常显示，方便开发/联调观察真实页面；
+//! 关闭（默认）时隐藏（规避隐藏 WebView eval no-op 的做法见实现方案 §5.2）。
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -19,16 +18,9 @@ pub enum AuthWindowVisibility {
 }
 
 impl AuthWindowVisibility {
-    /// 解析认证窗口显示配置。
-    pub fn resolve() -> Self {
-        if let Ok(value) = std::env::var("YULINK_AUTH_VISIBLE") {
-            match value.trim().to_ascii_lowercase().as_str() {
-                "1" | "true" | "show" | "visible" | "on" => return Self::Visible,
-                "0" | "false" | "hide" | "hidden" | "off" => return Self::Hidden,
-                _ => {}
-            }
-        }
-        if cfg!(debug_assertions) {
+    /// 按设置页“显示认证窗口”开关解析显示策略。
+    pub fn from_config(show: bool) -> Self {
+        if show {
             Self::Visible
         } else {
             Self::Hidden
@@ -51,7 +43,6 @@ pub fn create_auth_window(
     visibility: AuthWindowVisibility,
 ) -> Result<(), String> {
     let parsed = tauri::Url::parse(url).map_err(|e| format!("URL 解析失败: {e}"))?;
-    let nav_url = parsed.clone();
     let (tx, rx) = mpsc::channel::<Result<(), String>>();
     let app2 = app.clone();
     let label_owned = label.to_string();
@@ -78,6 +69,8 @@ pub fn create_auth_window(
                 .visible(false),
         };
 
+        // 只走 `WebviewUrl::External` 这一次导航；不要建窗后再 navigate 一次，
+        // 否则第一次文档刚执行注入脚本就整页被替换（日志表现为 started 后静默超时）。
         let result = if cfg!(debug_assertions) {
             // 开发阶段打印页面加载事件，便于观察注入时序
             builder
@@ -88,11 +81,6 @@ pub fn create_auth_window(
         } else {
             builder.build()
         }
-        .and_then(|win| {
-            // 建窗后再次显式导航，规避初始导航未触发的情况
-            win.navigate(nav_url)?;
-            Ok(win)
-        })
         .map(|_| ())
         .map_err(|e| e.to_string());
 

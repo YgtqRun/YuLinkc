@@ -21,6 +21,9 @@ interface SettingsView {
   smsStatusText: string;
   autostart: boolean;
   awayMode: boolean;
+  showAuthWindow: boolean;
+  autoRelogin: boolean;
+  quitAfterFirstConnect: boolean;
   portalWireless: string;
   portalWired: string;
   status: StatusView;
@@ -43,6 +46,9 @@ interface SaveRequest {
   portalWireless?: string;
   portalWired?: string;
   awayMode?: boolean;
+  showAuthWindow?: boolean;
+  autoRelogin?: boolean;
+  quitAfterFirstConnect?: boolean;
 }
 
 interface CommandResult {
@@ -65,6 +71,9 @@ const expireChoice = ref(String(DEFAULT_HOURS));
 const customHours = ref("");
 const autostart = ref(false);
 const awayMode = ref(false);
+const showAuthWindow = ref(false);
+const autoRelogin = ref(true);
+const quitAfterFirstConnect = ref(false);
 const portalWireless = ref("");
 const portalWired = ref("");
 const statusView = ref<StatusView>({ kind: "checking", text: "读取中…" });
@@ -139,6 +148,9 @@ function applyView(v: SettingsView) {
   savedSmsStatusText.value = v.smsStatusText;
   autostart.value = v.autostart;
   awayMode.value = v.awayMode;
+  showAuthWindow.value = v.showAuthWindow;
+  autoRelogin.value = v.autoRelogin;
+  quitAfterFirstConnect.value = v.quitAfterFirstConnect;
   portalWireless.value = v.portalWireless;
   portalWired.value = v.portalWired;
   statusView.value = v.status;
@@ -241,6 +253,9 @@ async function saveSettings() {
     portalWireless: portalWireless.value.trim(),
     portalWired: portalWired.value.trim(),
     awayMode: awayMode.value,
+    showAuthWindow: showAuthWindow.value,
+    autoRelogin: autoRelogin.value,
+    quitAfterFirstConnect: quitAfterFirstConnect.value,
   };
   try {
     applyView(await invoke<SettingsView>("save_settings", { req }));
@@ -281,6 +296,65 @@ async function toggleAutostart() {
     showToast(res.message, "success");
   } catch (e) {
     autostart.value = !target;
+    showToast(String(e), "error");
+  }
+}
+
+async function toggleShowAuthWindow() {
+  const target = !showAuthWindow.value;
+  showAuthWindow.value = target;
+  try {
+    const view = await invoke<SettingsView>("save_settings", {
+      req: { showAuthWindow: target },
+    });
+    applyView(view);
+    showToast(target ? "登录时显示认证窗口" : "认证窗口已隐藏", "info");
+  } catch (e) {
+    showAuthWindow.value = !target;
+    showToast(String(e), "error");
+  }
+}
+
+async function toggleAutoRelogin() {
+  if (quitAfterFirstConnect.value) {
+    showToast("“连接成功后退出”开启时，自动重试不可用", "info");
+    return;
+  }
+  const target = !autoRelogin.value;
+  autoRelogin.value = target;
+  try {
+    const view = await invoke<SettingsView>("save_settings", {
+      req: { autoRelogin: target },
+    });
+    applyView(view);
+    showToast(
+      target
+        ? "掉线后将一直自动重试登录"
+        : "首次连接成功后不再自动登录，仅保留心跳检测",
+      "info"
+    );
+  } catch (e) {
+    autoRelogin.value = !target;
+    showToast(String(e), "error");
+  }
+}
+
+async function toggleQuitAfterFirstConnect() {
+  const target = !quitAfterFirstConnect.value;
+  quitAfterFirstConnect.value = target;
+  try {
+    const view = await invoke<SettingsView>("save_settings", {
+      req: { quitAfterFirstConnect: target },
+    });
+    applyView(view);
+    showToast(
+      target
+        ? "首次连接成功后程序将自动退出"
+        : "已取消“连接成功后退出”",
+      target ? "info" : "success"
+    );
+  } catch (e) {
+    quitAfterFirstConnect.value = !target;
     showToast(String(e), "error");
   }
 }
@@ -511,6 +585,34 @@ onUnmounted(() => {
               <small>登录 Windows 后自动运行</small>
             </div>
             <span class="switch" :class="{ on: autostart }"><i></i></span>
+          </div>
+          <div class="switch-card" @click="toggleShowAuthWindow">
+            <div>
+              <strong>显示认证窗口</strong>
+              <small>登录时显示门户页面；关闭后后台自动完成</small>
+            </div>
+            <span class="switch" :class="{ on: showAuthWindow }"><i></i></span>
+          </div>
+          <div
+            class="switch-card"
+            :class="{ disabled: quitAfterFirstConnect }"
+            @click="toggleAutoRelogin"
+          >
+            <div>
+              <strong>断网自动重试</strong>
+              <small v-if="!quitAfterFirstConnect">
+                关闭后首次连接成功便不再自动登录，仅保留心跳检测
+              </small>
+              <small v-else>已由“连接成功后退出”接管，无需自动重试</small>
+            </div>
+            <span class="switch" :class="{ on: autoRelogin }"><i></i></span>
+          </div>
+          <div class="switch-card" @click="toggleQuitAfterFirstConnect">
+            <div>
+              <strong>连接成功后退出</strong>
+              <small>开机后首次连接成功即关闭程序，不再维护后续事务</small>
+            </div>
+            <span class="switch" :class="{ on: quitAfterFirstConnect }"><i></i></span>
           </div>
         </section>
 
@@ -849,6 +951,11 @@ body {
   padding: var(--space-2) 0;
   cursor: pointer;
   border-bottom: var(--hairline);
+}
+
+.switch-card.disabled {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .switch-card strong,
