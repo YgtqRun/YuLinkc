@@ -23,6 +23,7 @@ pub struct SettingsView {
     pub sms_saved_at: i64,
     pub sms_status_text: String,
     pub autostart: bool,
+    pub startup_boost: bool,
     pub away_mode: bool,
     pub show_auth_window: bool,
     pub auto_relogin: bool,
@@ -75,6 +76,7 @@ pub struct SaveSettingsRequest {
     pub portal_wireless: Option<String>,
     pub portal_wired: Option<String>,
     pub away_mode: Option<bool>,
+    pub startup_boost: Option<bool>,
     pub show_auth_window: Option<bool>,
     pub auto_relogin: Option<bool>,
     pub quit_after_first_connect: Option<bool>,
@@ -130,6 +132,7 @@ fn build_view(cfg: &AppConfig) -> SettingsView {
         sms_saved_at: cfg.sms_code.as_ref().map(|s| s.saved_at).unwrap_or(0),
         sms_status_text: cfg.sms_status_text(now),
         autostart: cfg.preferences.autostart,
+        startup_boost: cfg.preferences.startup_boost,
         away_mode: cfg.preferences.away_mode,
         show_auth_window: cfg.preferences.show_auth_window,
         auto_relogin: cfg.preferences.auto_relogin,
@@ -214,6 +217,11 @@ pub fn save_settings(
     }
     if let Some(away) = req.away_mode {
         cfg.preferences.away_mode = away;
+    }
+    if let Some(boost) = req.startup_boost {
+        // 先写注册表，失败就不改配置，避免界面与系统状态不一致。
+        crate::autostart::set_startup_boost(boost)?;
+        cfg.preferences.startup_boost = boost;
     }
     if let Some(show) = req.show_auth_window {
         cfg.preferences.show_auth_window = show;
@@ -314,4 +322,65 @@ pub fn get_app_info(app: AppHandle) -> AppInfoView {
         version: app.package_info().version.to_string(),
         repo_url: env!("YULINK_REPO_URL").to_string(),
     }
+}
+
+/// 更新检查结果（只提示，不下载不安装）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckView {
+    /// 本机版本。
+    pub current: String,
+    /// 远端最新版本；检查失败时为 `None`。
+    pub latest: Option<String>,
+    pub has_update: bool,
+    /// 新版本的发布页地址（点击跳浏览器）。
+    pub url: Option<String>,
+    pub notes: Option<String>,
+    /// 检查失败原因（网络不通、仓库未配置等）；成功时为 `None`。
+    pub error: Option<String>,
+}
+
+/// 检查 GitHub Release 上是否有新版本。
+///
+/// `force` 为 false 时复用本次运行已缓存的结果，避免同一个进程反复请求。
+#[tauri::command]
+pub fn check_update(app: AppHandle, force: bool) -> UpdateCheckView {
+    let current = app.package_info().version.to_string();
+    let view = match crate::update::check(&current, force) {
+        crate::update::Outcome::Newer(release) => UpdateCheckView {
+            current,
+            latest: Some(release.version),
+            has_update: true,
+            url: Some(release.url),
+            notes: if release.notes.is_empty() {
+                None
+            } else {
+                Some(release.notes)
+            },
+            error: None,
+        },
+        crate::update::Outcome::UpToDate { latest } => UpdateCheckView {
+            current,
+            latest: Some(latest),
+            has_update: false,
+            url: None,
+            notes: None,
+            error: None,
+        },
+        crate::update::Outcome::Failed(message) => UpdateCheckView {
+            current,
+            latest: None,
+            has_update: false,
+            url: None,
+            notes: None,
+            error: Some(message),
+        },
+    };
+    match (&view.error, &view.latest) {
+        (Some(message), _) => log::warn!("检查更新失败: {message}"),
+        (None, Some(latest)) if view.has_update => log::info!("发现新版本 {latest}"),
+        (None, Some(latest)) => log::info!("已是最新（远端 {latest}）"),
+        (None, None) => {}
+    }
+    view
 }

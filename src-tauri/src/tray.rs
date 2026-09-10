@@ -10,7 +10,6 @@ use log::{info, warn};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, PhysicalPosition, Wry};
-use tauri_plugin_autostart::ManagerExt;
 
 use crate::scheduler::Scheduler;
 use crate::state::RuntimeState;
@@ -228,13 +227,9 @@ fn place_bottom_right(win: &tauri::WebviewWindow<Wry>) {
 
 /// 设置开机自启并同步持久化配置。供 UI 设置页调用。
 pub(crate) fn set_autostart(app: &AppHandle<Wry>, enabled: bool) -> Result<(), String> {
-    let auto = app.autolaunch();
-    let result = if enabled {
-        auto.enable()
-    } else {
-        auto.disable()
-    };
-    result.map_err(|e| format!("切换开机自启失败: {e}"))?;
+    // 直接维护 HKCU\...\Run 项：登记的是**当前** exe 路径（带引号），并在每次启动时自检，
+    // 免安装版改名/挪目录后不会像旧实现那样静默失效。
+    crate::autostart::set_enabled(enabled)?;
 
     let paths = app.state::<ConfigPaths>();
     let state = app.state::<ConfigState>();

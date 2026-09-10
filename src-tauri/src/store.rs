@@ -74,6 +74,9 @@ pub struct SmsCode {
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
     pub autostart: bool,
+    /// 设置页“开机启动加速”：`HKCU\...\Explorer\Serialize\StartupDelayInMSec = 0`，
+    /// 取消 Windows 给登录后启动项加的延迟（对本用户所有自启项生效）。
+    pub startup_boost: bool,
     /// 离校模式：暂停自动认证与验证流程
     pub away_mode: bool,
     pub adapter_mode: String,
@@ -142,6 +145,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             autostart: true,
+            startup_boost: false,
             away_mode: false,
             adapter_mode: "auto".into(),
             portal_wireless: "http://172.26.255.2/".into(),

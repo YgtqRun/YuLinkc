@@ -21,6 +21,7 @@ interface SettingsView {
   smsSavedAt: number;
   smsStatusText: string;
   autostart: boolean;
+  startupBoost: boolean;
   awayMode: boolean;
   showAuthWindow: boolean;
   autoRelogin: boolean;
@@ -33,6 +34,15 @@ interface SettingsView {
 interface AppInfo {
   version: string;
   repoUrl: string;
+}
+
+interface UpdateCheck {
+  current: string;
+  latest: string | null;
+  hasUpdate: boolean;
+  url: string | null;
+  notes: string | null;
+  error: string | null;
 }
 
 interface AccountInput {
@@ -52,6 +62,7 @@ interface SaveRequest {
   portalWireless?: string;
   portalWired?: string;
   awayMode?: boolean;
+  startupBoost?: boolean;
   showAuthWindow?: boolean;
   autoRelogin?: boolean;
   quitAfterFirstConnect?: boolean;
@@ -76,6 +87,7 @@ const savedSmsStatusText = ref("未设置");
 const expireChoice = ref(String(DEFAULT_HOURS));
 const customHours = ref("");
 const autostart = ref(false);
+const startupBoost = ref(false);
 const awayMode = ref(false);
 const showAuthWindow = ref(false);
 const autoRelogin = ref(true);
@@ -83,6 +95,8 @@ const quitAfterFirstConnect = ref(false);
 const portalWireless = ref("");
 const portalWired = ref("");
 const appInfo = ref<AppInfo>({ version: "", repoUrl: "" });
+const updateResult = ref<UpdateCheck | null>(null);
+const updateChecking = ref(false);
 const statusView = ref<StatusView>({ kind: "checking", text: "读取中…" });
 const busy = ref(false);
 const toast = ref<{ text: string; type: string } | null>(null);
@@ -96,6 +110,7 @@ let clearTimer: number | undefined;
 let unlistenStatus: UnlistenFn | undefined;
 let enterTimer: number | undefined;
 let exitTimer: number | undefined;
+let updateAutoChecked = false;
 
 const appWindow = getCurrentWindow();
 
@@ -160,6 +175,7 @@ function applyView(v: SettingsView) {
   smsStatusText.value = v.smsStatusText;
   savedSmsStatusText.value = v.smsStatusText;
   autostart.value = v.autostart;
+  startupBoost.value = v.startupBoost;
   awayMode.value = v.awayMode;
   showAuthWindow.value = v.showAuthWindow;
   autoRelogin.value = v.autoRelogin;
@@ -193,9 +209,11 @@ async function initRuntimeStatus() {
   } catch {
     // 等待调度器事件
   }
+  maybeAutoCheckUpdate(statusView.value.kind);
   try {
     unlistenStatus = await listen<StatusView>("yulink://status", (e) => {
       statusView.value = e.payload;
+      maybeAutoCheckUpdate(e.payload.kind);
       if (e.payload.kind === "needs-sms") {
         showToast(e.payload.text || "动态密码缺失或已过期", "error");
         getSettings();
@@ -208,6 +226,57 @@ async function initRuntimeStatus() {
   } catch {
     // 事件通道不可用时保留静态状态
   }
+}
+
+/** 联网成功后再自动查一次更新：没有网络时查也是白查，只查一次。 */
+function maybeAutoCheckUpdate(kind: string) {
+  if (updateAutoChecked || kind !== "connected") return;
+  updateAutoChecked = true;
+  checkUpdate(false);
+}
+
+async function checkUpdate(force: boolean) {
+  if (updateChecking.value) return;
+  updateChecking.value = true;
+  try {
+    updateResult.value = await invoke<UpdateCheck>("check_update", { force });
+  } catch (e) {
+    updateResult.value = {
+      current: appInfo.value.version,
+      latest: null,
+      hasUpdate: false,
+      url: null,
+      notes: null,
+      error: String(e),
+    };
+  } finally {
+    updateChecking.value = false;
+  }
+}
+
+const updateText = computed(() => {
+  if (updateChecking.value) return "检查中…";
+  const result = updateResult.value;
+  if (!result) return "点击检查";
+  if (result.hasUpdate) return `发现新版本 ${result.latest} ↗`;
+  if (result.error) return "检查失败，点击重试";
+  return "已是最新";
+});
+
+const updateClickable = computed(
+  () => !!updateResult.value?.hasUpdate || !updateChecking.value
+);
+
+const updateHint = computed(() => updateResult.value?.notes ?? "");
+
+/** 有新版本就打开发布页，否则触发一次强制检查。 */
+function onUpdateRowClick() {
+  const result = updateResult.value;
+  if (result?.hasUpdate && result.url) {
+    openUrl(result.url).catch(() => {});
+    return;
+  }
+  checkUpdate(true);
 }
 
 function choiceHours(): number | null {
@@ -309,6 +378,26 @@ async function toggleAutostart() {
     showToast(res.message, "success");
   } catch (e) {
     autostart.value = !target;
+    showToast(String(e), "error");
+  }
+}
+
+async function toggleStartupBoost() {
+  const target = !startupBoost.value;
+  startupBoost.value = target;
+  try {
+    const view = await invoke<SettingsView>("save_settings", {
+      req: { startupBoost: target },
+    });
+    applyView(view);
+    showToast(
+      target
+        ? "已取消 Windows 对启动项的延迟，登录后会更早拉起"
+        : "已恢复 Windows 默认的启动项延迟",
+      "info"
+    );
+  } catch (e) {
+    startupBoost.value = !target;
     showToast(String(e), "error");
   }
 }
@@ -615,6 +704,15 @@ onUnmounted(() => {
             </div>
             <span class="switch" :class="{ on: autostart }"><i></i></span>
           </div>
+          <div class="switch-card" @click="toggleStartupBoost">
+            <div>
+              <strong>开机启动加速</strong>
+              <small>
+                取消 Windows 给登录后启动项加的延迟，登录后更早拉起（对本机当前用户的所有自启项生效）
+              </small>
+            </div>
+            <span class="switch" :class="{ on: startupBoost }"><i></i></span>
+          </div>
           <div class="switch-card" @click="toggleShowAuthWindow">
             <div>
               <strong>显示认证窗口</strong>
@@ -669,10 +767,10 @@ onUnmounted(() => {
             </div>
             <div class="row">
               <span>版本</span>
-              <span class="about-value">v{{ appInfo.version || "0.1.0" }}</span>
+              <span class="about-value">v{{ appInfo.version || "未知" }}</span>
             </div>
             <div
-              class="row about-repo"
+              class="row about-link"
               :class="{ clickable: /^https?:/i.test(appInfo.repoUrl) }"
               @click="openRepo"
             >
@@ -683,6 +781,14 @@ onUnmounted(() => {
                 </template>
                 <template v-else>本地仓库（未配置远程）</template>
               </span>
+            </div>
+            <div
+              class="row about-link"
+              :class="{ clickable: updateClickable }"
+              @click="onUpdateRowClick"
+            >
+              <span>更新</span>
+              <span class="about-value" :title="updateHint">{{ updateText }}</span>
             </div>
           </div>
         </section>
@@ -1075,15 +1181,15 @@ body {
   user-select: none;
 }
 
-.row.about-repo {
+.row.about-link {
   cursor: default;
 }
 
-.row.about-repo.clickable {
+.row.about-link.clickable {
   cursor: pointer;
 }
 
-.row.about-repo.clickable .about-value {
+.row.about-link.clickable .about-value {
   color: #1d64d8;
 }
 
