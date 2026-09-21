@@ -28,6 +28,8 @@ pub struct SettingsView {
     pub show_auth_window: bool,
     pub auto_relogin: bool,
     pub quit_after_first_connect: bool,
+    /// 主题：system = 跟随系统，light = 浅色，dark = 暗色
+    pub theme: String,
     pub portal_wireless: String,
     pub portal_wired: String,
     pub status: StatusView,
@@ -80,6 +82,8 @@ pub struct SaveSettingsRequest {
     pub show_auth_window: Option<bool>,
     pub auto_relogin: Option<bool>,
     pub quit_after_first_connect: Option<bool>,
+    /// 主题：仅接受 system / light / dark，其它取值按「跟随系统」处理
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,6 +141,7 @@ fn build_view(cfg: &AppConfig) -> SettingsView {
         show_auth_window: cfg.preferences.show_auth_window,
         auto_relogin: cfg.preferences.auto_relogin,
         quit_after_first_connect: cfg.preferences.quit_after_first_connect,
+        theme: cfg.preferences.theme.clone(),
         portal_wireless: cfg.preferences.portal_wireless.clone(),
         portal_wired: cfg.preferences.portal_wired.clone(),
         status: StatusView {
@@ -231,6 +236,9 @@ pub fn save_settings(
     }
     if let Some(quit) = req.quit_after_first_connect {
         cfg.preferences.quit_after_first_connect = quit;
+    }
+    if let Some(theme) = req.theme {
+        cfg.preferences.theme = crate::store::normalize_theme(&theme);
     }
 
     save_config(&cfg, &paths, &config_state)?;

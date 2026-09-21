@@ -93,6 +93,8 @@ pub struct Preferences {
     pub auto_relogin: bool,
     /// 设置页“连接成功后退出”：开机后第一次连接成功即关闭软件，不再维护后续事务。
     pub quit_after_first_connect: bool,
+    /// 设置页“主题”：`system` = 跟随系统，`light` = 浅色，`dark` = 暗色。
+    pub theme: String,
 }
 
 impl Default for AppConfig {
@@ -158,7 +160,18 @@ impl Default for Preferences {
             show_auth_window: false,
             auto_relogin: true,
             quit_after_first_connect: false,
+            theme: "system".into(),
         }
+    }
+}
+
+/// 主题取值规范化：仅接受 `system` / `light` / `dark`，
+/// 旧配置缺字段或写入未知值时一律回落到「跟随系统」。
+pub fn normalize_theme(raw: &str) -> String {
+    match raw.trim() {
+        "light" => "light".to_string(),
+        "dark" => "dark".to_string(),
+        _ => "system".to_string(),
     }
 }
 
@@ -183,6 +196,9 @@ impl AppConfig {
             if p.get("quitAfterFirstConnect").is_none() {
                 p["quitAfterFirstConnect"] = serde_json::json!(false);
             }
+            if p.get("theme").is_none() {
+                p["theme"] = serde_json::json!("system");
+            }
         }
         let mut cfg: AppConfig = serde_json::from_value(root)
             .map_err(|e| format!("解析配置失败: {e}"))?;
@@ -190,6 +206,8 @@ impl AppConfig {
         if cfg.selectors.logout.is_empty() {
             cfg.selectors.logout = Selectors::default().logout;
         }
+        // 主题同样兜底：字段缺失/取值异常都按“跟随系统”处理。
+        cfg.preferences.theme = normalize_theme(&cfg.preferences.theme);
         Ok(cfg)
     }
 
@@ -380,6 +398,40 @@ mod tests {
             ("20240001".to_string(), "p@ss word".to_string())
         );
         assert_eq!(loaded.sms_code().unwrap(), "123456");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 主题取值：只认 system/light/dark，其余（含旧配置缺字段）一律回落到跟随系统。
+    #[test]
+    fn theme_defaults_to_system_and_normalizes_unknown() {
+        assert_eq!(AppConfig::default().preferences.theme, "system");
+        for v in ["system", "light", "dark"] {
+            assert_eq!(normalize_theme(v), v);
+        }
+        for v in ["", "Dark", "auto", "blue"] {
+            assert_eq!(normalize_theme(v), "system");
+        }
+    }
+
+    /// 旧配置文件没有 theme 字段时，加载后应按“跟随系统”补齐并写回。
+    #[test]
+    fn legacy_config_without_theme_loads_as_system() {
+        let dir = std::env::temp_dir().join(format!(
+            "yulink-theme-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(CONFIG_FILE),
+            r#"{"preferences":{"autostart":false,"showAuthWindow":false,"autoRelogin":true,"quitAfterFirstConnect":false}}"#,
+        )
+        .unwrap();
+
+        let loaded = AppConfig::load(&dir).unwrap();
+        assert_eq!(loaded.preferences.theme, "system");
+        assert!(!loaded.preferences.autostart);
 
         let _ = fs::remove_dir_all(&dir);
     }

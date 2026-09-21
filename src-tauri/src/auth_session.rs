@@ -1,6 +1,6 @@
 //! 认证登录会话：创建认证窗口 → 注入脚本 → 等待信标结果 → 销毁窗口。
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,8 @@ pub enum LoginOutcomeKind {
     AlreadyOnline,
     /// 仅检测模式下发现登录表单：需要登录，但按设置不执行登录。
     LoginFormPresent,
+    /// “仅检测”巡检被用户手动登录打断：本轮不作结果，由调度器立刻改跑强制登录。
+    Preempted,
     CredentialsFailed(String),
     SmsCodeFailed(String),
     PageError(String),
@@ -45,6 +47,7 @@ impl LoginOutcome {
             LoginOutcomeKind::LoginFormPresent => {
                 "认证页需要登录（检测模式，未执行登录）".into()
             }
+            LoginOutcomeKind::Preempted => "仅检测巡检已让位给手动登录".into(),
             LoginOutcomeKind::CredentialsFailed(msg) => format!("认证失败：{msg}"),
             LoginOutcomeKind::SmsCodeFailed(msg) => format!("动态密码错误：{msg}"),
             LoginOutcomeKind::PageError(msg) => format!("认证页异常：{msg}"),
@@ -66,6 +69,8 @@ pub fn run_login(
     selectors: &crate::store::Selectors,
     visibility: AuthWindowVisibility,
     detect_only: bool,
+    // “仅检测”巡检用于让位给手动登录：标记为 true 时本轮立刻结束。
+    abort: Option<&AtomicBool>,
 ) -> Result<LoginOutcome, String> {
     cleanup_auth_windows(app, "auth-");
 
@@ -107,6 +112,14 @@ pub fn run_login(
     let mut refreshed = false;
 
     let outcome = 'outer: loop {
+        // 用户点了“立即登录”：本轮仅检测立刻收工，把窗口与时间让给真正的登录，
+        // 否则手动登录要等这一轮巡检跑完（可能十几秒到几十秒）。
+        if abort.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+            break 'outer LoginOutcome {
+                kind: LoginOutcomeKind::Preempted,
+            };
+        }
+
         let mut terminal: Option<LoginOutcome> = None;
 
         while let Ok(ev) = beacon_rx.try_recv() {

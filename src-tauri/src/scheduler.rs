@@ -8,8 +8,12 @@
 //! - 登录失败按 `loginMaxRetries` 指数退避；若认证页已受理但外网始终未恢复，
 //!   则暂停自动重登，等外网真正恢复（或用户手动登录）再继续，避免反复打门户；
 //! - 页面判定成功只作为候选：Rust 外网探测确认通过才算“已连接”。
+//! - 用户点“立即登录”永远优先：排队请求合并成一次强制登录，正在跑的“仅检测”
+//!   巡检也会立刻让位，避免手动登录被“断网自动重试已关闭”的检测轮挤掉/拖住。
 
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -41,14 +45,25 @@ pub enum SchedMessage {
     CheckNow,
 }
 
+impl SchedMessage {
+    /// 是否为“用户显式要求登录”：必须优先于普通巡检执行。
+    fn is_login(&self) -> bool {
+        matches!(self, SchedMessage::LoginNow)
+    }
+}
+
 /// 供托盘/命令持有的调度器句柄。
 #[derive(Clone)]
 pub struct Scheduler {
     tx: Sender<SchedMessage>,
+    /// “立即登录”的即时标记：只用于让正在跑的“仅检测”巡检尽快让位，
+    /// 真正的请求仍然以通道里的消息为准。
+    login_requested: Arc<AtomicBool>,
 }
 
 impl Scheduler {
     pub fn request_login(&self) {
+        self.login_requested.store(true, Ordering::SeqCst);
         let _ = self.tx.send(SchedMessage::LoginNow);
     }
 
@@ -76,6 +91,8 @@ struct SchedCtx {
 
 pub fn spawn(app: &AppHandle) -> Scheduler {
     let (tx, rx) = mpsc::channel::<SchedMessage>();
+    let login_requested = Arc::new(AtomicBool::new(false));
+    let login_flag = login_requested.clone();
     let app2 = app.clone();
     thread::spawn(move || {
         let mut ctx = SchedCtx::default();
@@ -86,6 +103,17 @@ pub fn spawn(app: &AppHandle) -> Scheduler {
         let mut last_gate_online: Option<bool> = None;
 
         loop {
+            // 0) 先一次性消化队列里排队的请求。
+            //    界面“立即登录”会先保存凭据（顺带发一次 CheckNow）再发 LoginNow；
+            //    若逐个处理，就会先跑一轮普通巡检——关闭“断网自动重试”后普通巡检
+            //    是“仅检测”，会把用户手动点的登录挤到后面甚至覆盖掉状态提示。
+            //    这里合并成一次巡检，并且只要队列里有 LoginNow 就必须是强制登录。
+            match drain_requests(&rx, &mut force_login) {
+                Drain::Closed => break,
+                Drain::Awake => next_full = Instant::now(),
+                Drain::Idle => {}
+            }
+
             // 1) 轻量闸门：多端点探外网，感知 up/down 翻转并唤醒完整巡检。
             if Instant::now() >= next_gate {
                 next_gate += Duration::from_secs(GATE_INTERVAL_SEC);
@@ -123,7 +151,11 @@ pub fn spawn(app: &AppHandle) -> Scheduler {
 
             // 2) 完整巡检（仅在到期时执行）。
             if Instant::now() >= next_full {
-                let wait_secs = full_check(&app2, force_login, &mut ctx);
+                if force_login {
+                    // 手动登录马上开始：清掉即时标记，之后的新一轮“仅检测”无需再让位。
+                    login_flag.store(false, Ordering::SeqCst);
+                }
+                let wait_secs = full_check(&app2, force_login, &mut ctx, &login_flag);
                 force_login = false;
                 next_full = Instant::now() + Duration::from_secs(wait_secs);
             }
@@ -135,11 +167,11 @@ pub fn spawn(app: &AppHandle) -> Scheduler {
                 continue;
             }
             match rx.recv_timeout(next_event - now) {
-                Ok(SchedMessage::LoginNow) => {
-                    force_login = true;
-                    next_full = Instant::now();
-                }
-                Ok(SchedMessage::CheckNow) => {
+                // 先记下请求意图，队列里剩余的请求交给下一轮开头的统一消化。
+                Ok(msg) => {
+                    if msg.is_login() {
+                        force_login = true;
+                    }
                     next_full = Instant::now();
                 }
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -147,7 +179,39 @@ pub fn spawn(app: &AppHandle) -> Scheduler {
             }
         }
     });
-    Scheduler { tx }
+    Scheduler {
+        tx,
+        login_requested,
+    }
+}
+
+/// 一轮“消化队列请求”的结果。
+enum Drain {
+    /// 队列为空，本轮没有新请求。
+    Idle,
+    /// 取到了至少一个请求：应立刻做一次完整巡检。
+    Awake,
+    /// 发送端已关闭（程序退出）。
+    Closed,
+}
+
+/// 取走队列里所有待处理请求；`LoginNow` 会把本轮标记为强制登录。
+fn drain_requests(rx: &Receiver<SchedMessage>, force_login: &mut bool) -> Drain {
+    let mut awake = false;
+    loop {
+        match rx.try_recv() {
+            Ok(msg) => {
+                awake = true;
+                if msg.is_login() {
+                    *force_login = true;
+                }
+            }
+            Err(TryRecvError::Empty) => {
+                return if awake { Drain::Awake } else { Drain::Idle };
+            }
+            Err(TryRecvError::Disconnected) => return Drain::Closed,
+        }
+    }
 }
 
 /// 闸门：多端点廉价外网探活。配置读取失败时返回 None（本轮跳过）。
@@ -175,7 +239,12 @@ fn probe_external_any(primary: &str, per_url_timeout: Duration) -> (bool, Vec<St
 }
 
 /// 执行一轮完整巡检，返回下一次完整巡检的等待秒数。
-fn full_check(app: &AppHandle, force_login: bool, ctx: &mut SchedCtx) -> u64 {
+fn full_check(
+    app: &AppHandle,
+    force_login: bool,
+    ctx: &mut SchedCtx,
+    login_requested: &AtomicBool,
+) -> u64 {
     let cfg = match app.state::<ConfigState>().0.lock() {
         Ok(g) => g.clone(),
         Err(_) => return 30,
@@ -307,9 +376,23 @@ fn full_check(app: &AppHandle, force_login: bool, ctx: &mut SchedCtx) -> u64 {
         &cfg.selectors,
         AuthWindowVisibility::from_config(prefs.show_auth_window),
         detect_only,
+        // 只有“仅检测”巡检需要让位给用户手动登录；真正的登录不打断。
+        if detect_only {
+            Some(login_requested)
+        } else {
+            None
+        },
     );
 
     match outcome {
+        // 用户点“立即登录”打断了这轮“仅检测”：不写状态、不写退避，
+        // 立刻回到队列，把同一个登录请求当作强制登录跑掉。
+        Ok(o) if o.kind == LoginOutcomeKind::Preempted => {
+            login_requested.store(false, Ordering::SeqCst);
+            ctx.page_ok_pending = false;
+            log::info!("仅检测巡检让位给手动登录，立即执行强制登录");
+            return 0;
+        }
         // 认证页没有登录表单但检测到注销按钮：会话已在线，不重复登录。
         Ok(o) if o.kind == LoginOutcomeKind::AlreadyOnline => {
             log::info!("{}，不重复登录", o.message());
@@ -447,6 +530,54 @@ fn backoff_secs(login_fail: u32, max_retries: u32) -> u64 {
     let steps = max_retries.max(1);
     let exp = (login_fail.saturating_sub(1)).min(steps);
     30u64 * 2u64.pow(exp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drain_requests_empty_is_idle() {
+        let (_tx, rx) = mpsc::channel::<SchedMessage>();
+        let mut force_login = false;
+        assert!(matches!(drain_requests(&rx, &mut force_login), Drain::Idle));
+        assert!(!force_login);
+    }
+
+    /// 关键回归：界面“立即登录”会先发 CheckNow（保存凭据）再发 LoginNow，
+    /// 两者必须合并成一次强制登录，否则关闭“断网自动重试”后会先跑一轮“仅检测”。
+    #[test]
+    fn drain_requests_merges_check_then_login_into_forced_login() {
+        let (tx, rx) = mpsc::channel::<SchedMessage>();
+        tx.send(SchedMessage::CheckNow).unwrap();
+        tx.send(SchedMessage::LoginNow).unwrap();
+
+        let mut force_login = false;
+        assert!(matches!(drain_requests(&rx, &mut force_login), Drain::Awake));
+        assert!(force_login, "队列里有 LoginNow 时必须按强制登录执行");
+        // 消息已被一次性取空，不会留下一轮多余的普通巡检
+        let mut again = false;
+        assert!(matches!(drain_requests(&rx, &mut again), Drain::Idle));
+        assert!(!again);
+    }
+
+    #[test]
+    fn drain_requests_check_only_keeps_normal_check() {
+        let (tx, rx) = mpsc::channel::<SchedMessage>();
+        tx.send(SchedMessage::CheckNow).unwrap();
+
+        let mut force_login = false;
+        assert!(matches!(drain_requests(&rx, &mut force_login), Drain::Awake));
+        assert!(!force_login);
+    }
+
+    #[test]
+    fn drain_requests_reports_closed_channel() {
+        let (tx, rx) = mpsc::channel::<SchedMessage>();
+        drop(tx);
+        let mut force_login = false;
+        assert!(matches!(drain_requests(&rx, &mut force_login), Drain::Closed));
+    }
 }
 
 fn portal_candidates(

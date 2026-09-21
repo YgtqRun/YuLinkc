@@ -26,6 +26,7 @@ interface SettingsView {
   showAuthWindow: boolean;
   autoRelogin: boolean;
   quitAfterFirstConnect: boolean;
+  theme: string;
   portalWireless: string;
   portalWired: string;
   status: StatusView;
@@ -66,12 +67,15 @@ interface SaveRequest {
   showAuthWindow?: boolean;
   autoRelogin?: boolean;
   quitAfterFirstConnect?: boolean;
+  theme?: string;
 }
 
 interface CommandResult {
   ok: boolean;
   message: string;
 }
+
+type ThemeChoice = "system" | "light" | "dark";
 
 const PRESET_HOURS = [1, 3, 9, 18, 27];
 const DEFAULT_HOURS = 27;
@@ -92,6 +96,8 @@ const awayMode = ref(false);
 const showAuthWindow = ref(false);
 const autoRelogin = ref(true);
 const quitAfterFirstConnect = ref(false);
+/** 主题选择（保存值）：system 跟随系统 / light 浅色 / dark 暗色 */
+const theme = ref<ThemeChoice>("system");
 const portalWireless = ref("");
 const portalWired = ref("");
 const appInfo = ref<AppInfo>({ version: "", repoUrl: "" });
@@ -99,6 +105,8 @@ const updateResult = ref<UpdateCheck | null>(null);
 const updateChecking = ref(false);
 const statusView = ref<StatusView>({ kind: "checking", text: "读取中…" });
 const busy = ref(false);
+/** 刚点过“立即登录”、还没收到任何状态回包：先把按钮锁住，避免连点触发多次登录会话 */
+const loginPending = ref(false);
 const toast = ref<{ text: string; type: string } | null>(null);
 const clearArmed = ref(false);
 const shown = ref(false);
@@ -110,9 +118,34 @@ let clearTimer: number | undefined;
 let unlistenStatus: UnlistenFn | undefined;
 let enterTimer: number | undefined;
 let exitTimer: number | undefined;
+let loginPendingTimer: number | undefined;
 let updateAutoChecked = false;
 
+/** 点击“立即登录”后的兜底解锁时间：极端情况下状态事件丢失也不至于一直锁死 */
+const LOGIN_PENDING_MAX_MS = 150000;
+
 const appWindow = getCurrentWindow();
+
+/** 系统浅色/暗色偏好（「跟随系统」时用来解析实际主题） */
+const systemDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function normalizeTheme(raw: string): ThemeChoice {
+  return raw === "light" || raw === "dark" ? raw : "system";
+}
+
+/** 把主题落到 <html data-theme="light|dark">：跟随系统时按系统偏好解析 */
+function applyTheme(choice: string) {
+  const resolved =
+    choice === "dark" || (choice !== "light" && systemDarkQuery.matches)
+      ? "dark"
+      : "light";
+  document.documentElement.dataset.theme = resolved;
+}
+
+/** 系统在浅色/暗色间切换时，「跟随系统」要实时跟上 */
+function onSystemThemeChange() {
+  if (theme.value === "system") applyTheme("system");
+}
 
 const repoDisplay = computed(() => {
   const url = appInfo.value.repoUrl;
@@ -160,6 +193,27 @@ const statusClass = computed(() => {
   return "muted";
 });
 
+/** 登录进行中：按钮锁定（按钮点击自己发起，或调度器正在登录/确认外网） */
+const loginLocked = computed(
+  () => busy.value || loginPending.value || statusView.value.kind === "logging-in"
+);
+
+function lockLogin() {
+  loginPending.value = true;
+  if (loginPendingTimer) window.clearTimeout(loginPendingTimer);
+  loginPendingTimer = window.setTimeout(() => {
+    loginPending.value = false;
+  }, LOGIN_PENDING_MAX_MS);
+}
+
+function unlockLogin() {
+  if (loginPendingTimer) {
+    window.clearTimeout(loginPendingTimer);
+    loginPendingTimer = undefined;
+  }
+  loginPending.value = false;
+}
+
 function showToast(text: string, type = "info") {
   toast.value = { text, type };
   if (toastTimer) window.clearTimeout(toastTimer);
@@ -180,6 +234,8 @@ function applyView(v: SettingsView) {
   showAuthWindow.value = v.showAuthWindow;
   autoRelogin.value = v.autoRelogin;
   quitAfterFirstConnect.value = v.quitAfterFirstConnect;
+  theme.value = normalizeTheme(v.theme);
+  applyTheme(theme.value);
   portalWireless.value = v.portalWireless;
   portalWired.value = v.portalWired;
   statusView.value = v.status;
@@ -214,6 +270,8 @@ async function initRuntimeStatus() {
     unlistenStatus = await listen<StatusView>("yulink://status", (e) => {
       statusView.value = e.payload;
       maybeAutoCheckUpdate(e.payload.kind);
+      // 登录结束（成功/失败/需补码等）后解除按钮锁定
+      if (e.payload.kind !== "logging-in") unlockLogin();
       if (e.payload.kind === "needs-sms") {
         showToast(e.payload.text || "动态密码缺失或已过期", "error");
         getSettings();
@@ -338,6 +396,7 @@ async function saveSettings() {
     showAuthWindow: showAuthWindow.value,
     autoRelogin: autoRelogin.value,
     quitAfterFirstConnect: quitAfterFirstConnect.value,
+    theme: theme.value,
   };
   try {
     applyView(await invoke<SettingsView>("save_settings", { req }));
@@ -461,6 +520,25 @@ async function toggleQuitAfterFirstConnect() {
   }
 }
 
+/** 主题切换即时生效并落盘（与其它开关一致，不用等“保存设置”） */
+async function onThemeChange(e: Event) {
+  // 直接取下拉框的值，不依赖 v-model 与 @change 的触发顺序
+  const target = normalizeTheme((e.target as HTMLSelectElement).value);
+  theme.value = target;
+  applyTheme(target);
+  try {
+    applyView(
+      await invoke<SettingsView>("save_settings", { req: { theme: target } })
+    );
+    const text =
+      target === "system" ? "主题：跟随系统" : target === "dark" ? "主题：暗色" : "主题：浅色";
+    showToast(text, "info");
+  } catch (e) {
+    showToast(String(e), "error");
+    getSettings();
+  }
+}
+
 async function loginNow() {
   if (awayMode.value) {
     showToast("离校模式已开启，不会执行验证流程", "error");
@@ -468,11 +546,14 @@ async function loginNow() {
   }
   const ok = await saveCredentials();
   if (!ok) return;
+  lockLogin();
   busy.value = true;
   try {
     const res = await invoke<CommandResult>("login_now");
     showToast(res.message, res.ok ? "info" : "error");
+    if (!res.ok) unlockLogin();
   } catch (e) {
+    unlockLogin();
     showToast(String(e), "error");
   } finally {
     busy.value = false;
@@ -556,6 +637,8 @@ onMounted(() => {
   getSettings();
   initRuntimeStatus();
   loadAppInfo();
+  applyTheme(theme.value);
+  systemDarkQuery.addEventListener("change", onSystemThemeChange);
   window.addEventListener("keydown", onEscape);
   // 供 Rust 侧在窗口稳定显示后调用：__yulinkEnter / __yulinkExit
   (window as unknown as Record<string, unknown>).__yulinkPrepare = prepareShow;
@@ -565,11 +648,13 @@ onMounted(() => {
 
 onUnmounted(() => {
   unlistenStatus?.();
+  systemDarkQuery.removeEventListener("change", onSystemThemeChange);
   window.removeEventListener("keydown", onEscape);
   if (toastTimer) window.clearTimeout(toastTimer);
   if (clearTimer) window.clearTimeout(clearTimer);
   if (enterTimer) window.clearTimeout(enterTimer);
   if (exitTimer) window.clearTimeout(exitTimer);
+  if (loginPendingTimer) window.clearTimeout(loginPendingTimer);
 });
 </script>
 
@@ -614,11 +699,12 @@ onUnmounted(() => {
           <strong>{{ statusView.text }}</strong>
           <small>动态密码 {{ smsStatusText }}</small>
         </div>
-        <button v-if="page === 'home'" class="login-chip" type="button" :disabled="busy || awayMode" @click="loginNow">
+        <button v-if="page === 'home'" class="login-chip" type="button" :disabled="loginLocked || awayMode"
+          :title="loginLocked ? '登录进行中，请稍候' : '立即登录'" @click="loginNow">
           <svg viewBox="0 0 24 24" width="12" height="12">
             <path d="M8 5.5v13l10-6.5z" />
           </svg>
-          {{ busy ? "处理中" : awayMode ? "离校模式" : "立即登录" }}
+          {{ awayMode ? "离校模式" : busy ? "处理中" : loginLocked ? "登录中…" : "立即登录" }}
         </button>
       </section>
 
@@ -740,6 +826,26 @@ onUnmounted(() => {
               <small>开机后首次连接成功即关闭程序，不再维护后续事务</small>
             </div>
             <span class="switch" :class="{ on: quitAfterFirstConnect }"><i></i></span>
+          </div>
+        </section>
+
+        <section class="group">
+          <div class="group-title">外观</div>
+          <div class="field-card">
+            <div class="row theme-row">
+              <span>主题</span>
+              <span class="select">
+                <select v-model="theme" @change="onThemeChange">
+                  <option value="system">跟随系统</option>
+                  <option value="light">浅色</option>
+                  <option value="dark">暗色</option>
+                </select>
+                <svg viewBox="0 0 24 24" width="12" height="12">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </span>
+            </div>
+            <p class="hint">「跟随系统」会随 Windows 的浅色/暗色设置自动切换</p>
           </div>
         </section>
 
@@ -1158,6 +1264,10 @@ body {
   color: #565b64;
 }
 
+.row.theme-row {
+  justify-content: space-between;
+}
+
 .row .about-value {
   flex: 1;
   min-width: 0;
@@ -1445,55 +1555,67 @@ body {
   transform: translate(-50%, 6px);
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    color: #e9eaee;
-  }
+/* 主题：设置里的选择（跟随系统 / 浅色 / 暗色）由 JS 解析后写到 <html data-theme>，
+   「跟随系统」会监听 prefers-color-scheme 变化并实时改写该属性。 */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
 
-  .flyout-card {
-    background: #202124;
-    border-color: rgba(255, 255, 255, 0.1);
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
 
-  .status,
-  .field-card,
-  .switch-card,
-  .danger-card {
-    background: transparent;
-    border-color: rgba(255, 255, 255, 0.07);
-  }
+:root[data-theme="dark"] body {
+  color: #e9eaee;
+}
 
-  .row>span:first-child,
-  .group-title,
-  .expire-row,
-  .hint,
-  .title-box p,
-  .status small,
-  .switch-card small {
-    color: #a8adb8;
-  }
+:root[data-theme="dark"] .flyout-card {
+  background: #202124;
+  border-color: rgba(255, 255, 255, 0.1);
+}
 
-  .row input,
-  .sms-input,
-  .custom-row input {
-    color: #e9eaee;
-  }
+:root[data-theme="dark"] .status,
+:root[data-theme="dark"] .field-card,
+:root[data-theme="dark"] .switch-card,
+:root[data-theme="dark"] .danger-card {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.07);
+}
 
-  .select select,
-  .custom-row input {
-    background: rgba(255, 255, 255, 0.09);
-    color: #e9eaee;
-  }
+:root[data-theme="dark"] .row>span:first-child,
+:root[data-theme="dark"] .group-title,
+:root[data-theme="dark"] .expire-row,
+:root[data-theme="dark"] .hint,
+:root[data-theme="dark"] .title-box p,
+:root[data-theme="dark"] .status small,
+:root[data-theme="dark"] .switch-card small {
+  color: #a8adb8;
+}
 
-  .ghost {
-    background: rgba(255, 255, 255, 0.1);
-    color: #e9eaee;
-  }
+:root[data-theme="dark"] .row input,
+:root[data-theme="dark"] .sms-input,
+:root[data-theme="dark"] .custom-row input {
+  color: #e9eaee;
+}
 
-  .icon-btn:hover,
-  .eye:hover,
-  .text-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-  }
+:root[data-theme="dark"] .select select,
+:root[data-theme="dark"] .custom-row input {
+  background: rgba(255, 255, 255, 0.09);
+  color: #e9eaee;
+}
+
+:root[data-theme="dark"] .select svg {
+  stroke: #a8adb8;
+}
+
+:root[data-theme="dark"] .ghost {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e9eaee;
+}
+
+:root[data-theme="dark"] .icon-btn:hover,
+:root[data-theme="dark"] .eye:hover,
+:root[data-theme="dark"] .text-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 </style>
