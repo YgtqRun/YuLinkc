@@ -156,9 +156,9 @@ npm run build:web
 分别放入 FPK 的 `app/server/` 和 `app/www/`；标签发布时
 `.github/workflows/release.yml` 会自动完成这一步。
 
-> 注意：仓库不纳入本地联调素材（`docs/`、`mock/`、`scripts/`、`实现方案.md`、
-> `登录脚本.js`）。其中 `mock/wired.html` 与 `mock/wireless.html` 是 POC/E2E
-> 的编译依赖，克隆仓库后需自行放置这两份文件（或保留本地工作区副本）才能完整构建。
+> 注意：仓库不纳入本地联调素材（`docs/`、`scripts/`、`实现方案.md`、
+> `登录脚本.js`）。`mock/wired.html` 与 `mock/wireless.html` 是 POC/E2E 的
+> 编译依赖，已随仓库提供，保证 CI 和全新克隆可以直接构建。
 
 ## 仓库结构
 
