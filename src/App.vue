@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  clearBackground,
+  hideWindow,
+  invoke,
+  isWeb,
+  listen,
+  openUrl,
+  uploadBackground,
+  unmaximizeWindow,
+  type UnlistenFn,
+} from "@platform";
 
 interface StatusView {
   kind: string;
@@ -27,6 +34,8 @@ interface SettingsView {
   autoRelogin: boolean;
   quitAfterFirstConnect: boolean;
   theme: string;
+  loginMode: string;
+  backgroundUrl?: string;
   portalWireless: string;
   portalWired: string;
   status: StatusView;
@@ -68,6 +77,7 @@ interface SaveRequest {
   autoRelogin?: boolean;
   quitAfterFirstConnect?: boolean;
   theme?: string;
+  loginMode?: string;
 }
 
 interface CommandResult {
@@ -76,14 +86,17 @@ interface CommandResult {
 }
 
 type ThemeChoice = "system" | "light" | "dark";
+type LoginMode = "http" | "webview";
 
 const PRESET_HOURS = [1, 3, 9, 18, 27];
 const DEFAULT_HOURS = 27;
 const PERMANENT = -1;
+const logoSrc = `${import.meta.env.BASE_URL}yulink.png`;
 
 const page = ref<"home" | "settings">("home");
 const username = ref("");
 const password = ref("");
+const accountConfigured = ref(false);
 const showPassword = ref(false);
 const smsCode = ref("");
 const smsStatusText = ref("未设置");
@@ -98,6 +111,9 @@ const autoRelogin = ref(true);
 const quitAfterFirstConnect = ref(false);
 /** 主题选择（保存值）：system 跟随系统 / light 浅色 / dark 暗色 */
 const theme = ref<ThemeChoice>("system");
+const loginMode = ref<LoginMode>("http");
+const backgroundUrl = ref("");
+const backgroundBusy = ref(false);
 const portalWireless = ref("");
 const portalWired = ref("");
 const appInfo = ref<AppInfo>({ version: "", repoUrl: "" });
@@ -124,8 +140,6 @@ let updateAutoChecked = false;
 /** 点击“立即登录”后的兜底解锁时间：极端情况下状态事件丢失也不至于一直锁死 */
 const LOGIN_PENDING_MAX_MS = 150000;
 
-const appWindow = getCurrentWindow();
-
 /** 系统浅色/暗色偏好（「跟随系统」时用来解析实际主题） */
 const systemDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -140,6 +154,17 @@ function applyTheme(choice: string) {
       ? "dark"
       : "light";
   document.documentElement.dataset.theme = resolved;
+}
+
+function applyBackground(url: string) {
+  const root = document.documentElement;
+  if (url) {
+    const base = new URL(import.meta.env.BASE_URL, window.location.href);
+    const resolved = new URL(url, base).href;
+    root.style.setProperty("--web-bg-image", `url("${resolved}")`);
+  } else {
+    root.style.removeProperty("--web-bg-image");
+  }
 }
 
 /** 系统在浅色/暗色间切换时，「跟随系统」要实时跟上 */
@@ -173,15 +198,20 @@ function playEnter() {
 
 /** 收起前先向右滑出，动画结束后再隐藏窗口 */
 async function playExit() {
+  if (isWeb) return;
   if (closing.value) return;
   closing.value = true;
   if (exitTimer) window.clearTimeout(exitTimer);
   exitTimer = window.setTimeout(async () => {
     shown.value = false;
     closing.value = false;
-    await appWindow.hide().catch(() => {
-      // 极少数情况下 hide 被拒绝时忽略（Rust 侧也会兜底隐藏）
-    });
+    if (!isWeb) {
+      await hideWindow().catch(() => {
+        // 极少数情况下 hide 被拒绝时忽略（Rust 侧也会兜底隐藏）
+      });
+    } else {
+      shown.value = true;
+    }
   }, 220);
 }
 
@@ -224,8 +254,13 @@ function showToast(text: string, type = "info") {
 
 function applyView(v: SettingsView) {
   username.value = v.username;
-  password.value = v.password;
-  smsCode.value = v.smsCode;
+  if (v.password) {
+    password.value = v.password;
+  }
+  accountConfigured.value = v.accountConfigured;
+  if (v.smsCode) {
+    smsCode.value = v.smsCode;
+  }
   smsStatusText.value = v.smsStatusText;
   savedSmsStatusText.value = v.smsStatusText;
   autostart.value = v.autostart;
@@ -235,6 +270,11 @@ function applyView(v: SettingsView) {
   autoRelogin.value = v.autoRelogin;
   quitAfterFirstConnect.value = v.quitAfterFirstConnect;
   theme.value = normalizeTheme(v.theme);
+  loginMode.value = v.loginMode === "webview" ? "webview" : "http";
+  if (isWeb) {
+    backgroundUrl.value = v.backgroundUrl ?? "";
+    applyBackground(backgroundUrl.value);
+  }
   applyTheme(theme.value);
   portalWireless.value = v.portalWireless;
   portalWired.value = v.portalWired;
@@ -288,7 +328,7 @@ async function initRuntimeStatus() {
 
 /** 联网成功后再自动查一次更新：没有网络时查也是白查，只查一次。 */
 function maybeAutoCheckUpdate(kind: string) {
-  if (updateAutoChecked || kind !== "connected") return;
+  if (isWeb || updateAutoChecked || kind !== "connected") return;
   updateAutoChecked = true;
   checkUpdate(false);
 }
@@ -352,7 +392,10 @@ function collectCredentialRequest(): SaveRequest | { error: string } {
   const acc = username.value.trim();
   const pwd = password.value;
   if (acc || pwd) {
-    if (!acc || !pwd) {
+    if (!acc) {
+      return { error: "账号与密码需同时填写" };
+    }
+    if (!pwd && !accountConfigured.value) {
       return { error: "账号与密码需同时填写" };
     }
     req.account = { username: acc, password: pwd, isp: "2" };
@@ -397,6 +440,7 @@ async function saveSettings() {
     autoRelogin: autoRelogin.value,
     quitAfterFirstConnect: quitAfterFirstConnect.value,
     theme: theme.value,
+    loginMode: loginMode.value,
   };
   try {
     applyView(await invoke<SettingsView>("save_settings", { req }));
@@ -539,6 +583,94 @@ async function onThemeChange(e: Event) {
   }
 }
 
+async function onLoginModeChange(e: Event) {
+  const target = (e.target as HTMLSelectElement).value === "webview" ? "webview" : "http";
+  loginMode.value = target;
+  try {
+    applyView(
+      await invoke<SettingsView>("save_settings", { req: { loginMode: target } })
+    );
+    showToast(
+      target === "http" ? "已切换为 HTTP 新流程" : "已切换为 WebView2 旧流程",
+      "info"
+    );
+  } catch (e) {
+    showToast(String(e), "error");
+    getSettings();
+  }
+}
+
+async function compressBackground(file: File): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const maxWidth = 1920;
+    const maxHeight = 1080;
+    const scale = Math.min(
+      1,
+      maxWidth / bitmap.width,
+      maxHeight / bitmap.height
+    );
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("浏览器不支持图片压缩");
+    }
+    context.drawImage(bitmap, 0, 0, width, height);
+    const toBlob = (type: string, quality: number) =>
+      new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, type, quality);
+      });
+    const webp = await toBlob("image/webp", 0.82);
+    if (webp) return webp;
+    const jpeg = await toBlob("image/jpeg", 0.86);
+    if (jpeg) return jpeg;
+    throw new Error("图片压缩失败");
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function onBackgroundFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  backgroundBusy.value = true;
+  try {
+    const compressed = await compressBackground(file);
+    const result = await uploadBackground(compressed);
+    backgroundUrl.value = result.url;
+    applyBackground(result.url);
+    showToast(
+      `背景已更新（${Math.max(1, Math.round(compressed.size / 1024))} KB）`,
+      "success"
+    );
+  } catch (err) {
+    showToast(String(err), "error");
+  } finally {
+    backgroundBusy.value = false;
+  }
+}
+
+async function onClearBackground() {
+  if (!backgroundUrl.value || backgroundBusy.value) return;
+  backgroundBusy.value = true;
+  try {
+    await clearBackground();
+    backgroundUrl.value = "";
+    applyBackground("");
+    showToast("已恢复默认背景", "info");
+  } catch (err) {
+    showToast(String(err), "error");
+  } finally {
+    backgroundBusy.value = false;
+  }
+}
+
 async function loginNow() {
   if (awayMode.value) {
     showToast("离校模式已开启，不会执行验证流程", "error");
@@ -564,6 +696,7 @@ async function clearSms() {
   busy.value = true;
   try {
     applyView(await invoke<SettingsView>("clear_sms_code"));
+    smsCode.value = "";
     showToast("动态密码已清除", "info");
   } catch (e) {
     showToast(String(e), "error");
@@ -586,6 +719,8 @@ async function clearAll() {
   busy.value = true;
   try {
     applyView(await invoke<SettingsView>("clear_all"));
+    password.value = "";
+    smsCode.value = "";
     showToast("凭据已全部清空", "success");
   } catch (e) {
     showToast(String(e), "error");
@@ -630,10 +765,13 @@ function openRepo() {
 
 /** 双击头部是 Windows 最大化惯例；悬浮窗不应放大，兜底还原 */
 function preventMaximize() {
-  appWindow.unmaximize().catch(() => { });
+  unmaximizeWindow().catch(() => { });
 }
 
 onMounted(() => {
+  if (isWeb) {
+    shown.value = true;
+  }
   getSettings();
   initRuntimeStatus();
   loadAppInfo();
@@ -659,7 +797,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" :class="{ 'web-shell': isWeb }">
+    <div v-if="isWeb" class="web-brand-icon" aria-hidden="true">
+      <img :src="logoSrc" alt="" draggable="false" />
+    </div>
     <div class="flyout-card" :class="{
       'flyout-hidden': !shown && !closing,
       'flyout-in': entering,
@@ -667,7 +808,7 @@ onUnmounted(() => {
     }">
       <header class="head" data-tauri-drag-region @dblclick.prevent="preventMaximize">
         <template v-if="page === 'home'">
-          <img class="brand-logo" src="/yulink.png" alt="" draggable="false" />
+          <img class="brand-logo" :src="logoSrc" alt="" draggable="false" />
           <div class="title-box" data-tauri-drag-region>
             <h1>御连 YuLink</h1>
             <p>校园网自动认证</p>
@@ -720,7 +861,7 @@ onUnmounted(() => {
               <span>密码</span>
               <span class="pwd-wrap">
                 <input v-model="password" :type="showPassword ? 'text' : 'password'" autocomplete="new-password"
-                  placeholder="请输入密码" />
+                  :placeholder="accountConfigured ? '已保存，留空表示不修改' : '请输入密码'" />
                 <button class="eye" type="button" @click="showPassword = !showPassword">
                   {{ showPassword ? "隐藏" : "显示" }}
                 </button>
@@ -776,6 +917,23 @@ onUnmounted(() => {
 
         <section class="group">
           <div class="group-title">运行</div>
+          <div v-if="!isWeb" class="field-card">
+            <div class="row theme-row">
+              <span>登录方式</span>
+              <span class="select">
+                <select v-model="loginMode" @change="onLoginModeChange">
+                  <option value="http">HTTP（新）</option>
+                  <option value="webview">WebView2（旧）</option>
+                </select>
+                <svg viewBox="0 0 24 24" width="12" height="12">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </span>
+            </div>
+            <p class="hint">
+              HTTP 模式直接请求认证接口，不打开隐藏窗口；切回 WebView2 可保留旧流程。
+            </p>
+          </div>
           <div class="switch-card" @click="toggleAwayMode">
             <div>
               <strong>离校模式</strong>
@@ -783,14 +941,14 @@ onUnmounted(() => {
             </div>
             <span class="switch" :class="{ on: awayMode }"><i></i></span>
           </div>
-          <div class="switch-card" @click="toggleAutostart">
+          <div v-if="!isWeb" class="switch-card" @click="toggleAutostart">
             <div>
               <strong>开机自启动</strong>
               <small>登录 Windows 后自动运行</small>
             </div>
             <span class="switch" :class="{ on: autostart }"><i></i></span>
           </div>
-          <div class="switch-card" @click="toggleStartupBoost">
+          <div v-if="!isWeb" class="switch-card" @click="toggleStartupBoost">
             <div>
               <strong>开机启动加速</strong>
               <small>
@@ -799,7 +957,7 @@ onUnmounted(() => {
             </div>
             <span class="switch" :class="{ on: startupBoost }"><i></i></span>
           </div>
-          <div class="switch-card" @click="toggleShowAuthWindow">
+          <div v-if="!isWeb" class="switch-card" @click="toggleShowAuthWindow">
             <div>
               <strong>显示认证窗口</strong>
               <small>登录时显示门户页面；关闭后后台自动完成</small>
@@ -820,7 +978,7 @@ onUnmounted(() => {
             </div>
             <span class="switch" :class="{ on: autoRelogin }"><i></i></span>
           </div>
-          <div class="switch-card" @click="toggleQuitAfterFirstConnect">
+          <div v-if="!isWeb" class="switch-card" @click="toggleQuitAfterFirstConnect">
             <div>
               <strong>连接成功后退出</strong>
               <small>开机后首次连接成功即关闭程序，不再维护后续事务</small>
@@ -845,7 +1003,33 @@ onUnmounted(() => {
                 </svg>
               </span>
             </div>
-            <p class="hint">「跟随系统」会随 Windows 的浅色/暗色设置自动切换</p>
+            <p class="hint">「跟随系统」会随系统浅色/暗色设置自动切换</p>
+          </div>
+          <div v-if="isWeb" class="field-card background-card">
+            <div class="row background-row">
+              <span>背景图片</span>
+              <label class="bg-upload" :class="{ disabled: backgroundBusy }">
+                <input
+                  type="file"
+                  accept="image/*"
+                  :disabled="backgroundBusy"
+                  @change="onBackgroundFile"
+                />
+                <span>{{ backgroundBusy ? "处理中…" : "选择图片" }}</span>
+              </label>
+            </div>
+            <div class="background-foot">
+              <p class="hint">上传后自动压缩为 1920×1080 以内，并转为 WebP/JPEG</p>
+              <button
+                v-if="backgroundUrl"
+                class="text-btn"
+                type="button"
+                :disabled="backgroundBusy"
+                @click="onClearBackground"
+              >
+                恢复默认
+              </button>
+            </div>
           </div>
         </section>
 
@@ -867,7 +1051,7 @@ onUnmounted(() => {
             <div class="row">
               <span>名称</span>
               <span class="about-value">
-                <img class="about-logo" src="/yulink.png" alt="YuLink" draggable="false" />
+                <img class="about-logo" :src="logoSrc" alt="YuLink" draggable="false" />
                 御连 YuLink
               </span>
             </div>
@@ -889,6 +1073,7 @@ onUnmounted(() => {
               </span>
             </div>
             <div
+              v-if="!isWeb"
               class="row about-link"
               :class="{ clickable: updateClickable }"
               @click="onUpdateRowClick"
@@ -1617,5 +1802,144 @@ body {
 :root[data-theme="dark"] .eye:hover,
 :root[data-theme="dark"] .text-btn:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.background-card {
+  margin-top: 6px;
+}
+
+.background-row {
+  min-height: 44px;
+}
+
+.bg-upload {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 7px;
+  background: rgba(29, 100, 216, 0.08);
+  color: #1d64d8;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.bg-upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.bg-upload.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.background-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0 7px;
+}
+
+.background-foot .hint {
+  margin: 0;
+}
+
+/* Web 设置页外壳：宽屏居中一个竖版卡片，背景后续可替换为自定义图片。 */
+.page.web-shell {
+  position: relative;
+  height: 100vh;
+  min-height: 100vh;
+  padding: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background-color: #f7f8fb;
+  background-image: var(--web-bg-image, none);
+  background-size: cover;
+  background-position: center;
+}
+
+:root[data-theme="dark"] .page.web-shell {
+  background-color: #202124;
+}
+
+.page.web-shell .flyout-card {
+  width: min(400px, 100%);
+  height: min(720px, calc(100vh - 56px));
+  min-height: 520px;
+  max-height: 720px;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.13);
+}
+
+:root[data-theme="dark"] .page.web-shell .flyout-card {
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+
+.web-brand-icon {
+  position: fixed;
+  right: clamp(32px, 8vw, 140px);
+  top: 50%;
+  width: clamp(104px, 14vw, 200px);
+  padding: clamp(14px, 2vw, 24px);
+  border-radius: 30%;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.08);
+  transform: translateY(-50%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.web-brand-icon img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 24%;
+}
+
+:root[data-theme="dark"] .web-brand-icon {
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+  opacity: 0.9;
+}
+
+.page.web-shell .flyout-card.flyout-hidden,
+.page.web-shell .flyout-card.flyout-in,
+.page.web-shell .flyout-card.flyout-out {
+  opacity: 1;
+  transform: none;
+  animation: none;
+}
+
+.page.web-shell .toast {
+  bottom: 34px;
+}
+
+@media (max-width: 520px) {
+  .page.web-shell {
+    padding: 12px;
+  }
+
+  .page.web-shell .flyout-card {
+    width: 100%;
+    height: calc(100vh - 24px);
+    min-height: 0;
+    max-height: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .web-brand-icon {
+    display: none;
+  }
 }
 </style>

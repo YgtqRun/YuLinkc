@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-web
 dist-ssr
 *.local
 
@@ -30,3 +31,8 @@ docs/
 mock/
 scripts/
 yulink.png
+
+# 本地打包/联调产物
+*.tar.gz
+network-probe.ps1
+release-assets/

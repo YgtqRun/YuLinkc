@@ -1,8 +1,9 @@
-mod auth_window;
 mod auth_session;
+mod auth_window;
 mod autostart;
 mod bridge;
 mod commands;
+mod http_login;
 mod inject;
 mod logger;
 mod mock;
@@ -69,8 +70,7 @@ pub fn run() {
             .unwrap_or_else(|_| std::env::temp_dir().join("yulink"));
 
         // 轮转日志（失败不阻塞启动）
-        if let Err(e) = logger::FileLogger::init(&config_dir.join("logs"), log::LevelFilter::Info)
-        {
+        if let Err(e) = logger::FileLogger::init(&config_dir.join("logs"), log::LevelFilter::Info) {
             eprintln!("[yulink] 日志初始化失败: {e}");
             // GUI 下看不到 stderr，把失败原因落到配置目录，便于事后排查。
             let _ = std::fs::write(
@@ -229,9 +229,7 @@ fn save_config_state(app: &tauri::App) -> Result<(), String> {
 fn spawn_autostart_watchdog(app: &tauri::App) {
     let handle = app.handle().clone();
     std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(
-            AUTOSTART_WATCH_INTERVAL_SEC,
-        ));
+        std::thread::sleep(std::time::Duration::from_secs(AUTOSTART_WATCH_INTERVAL_SEC));
         let enabled = handle
             .state::<store::ConfigState>()
             .0

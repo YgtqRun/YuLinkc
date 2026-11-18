@@ -14,9 +14,7 @@ fn run_git(args: &[&str]) -> String {
     cmd.arg("-C").arg("..");
     cmd.args(args);
     match cmd.output() {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
         _ => String::new(),
     }
 }

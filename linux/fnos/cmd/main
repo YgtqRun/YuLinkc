@@ -1,0 +1,58 @@
+#!/bin/bash
+set -u
+
+BIN="${TRIM_APPDEST}/server/yulink-linux"
+WWW="${TRIM_APPDEST}/www"
+DATA="${TRIM_PKGVAR}"
+SOCK="${TRIM_APPDEST}/app.sock"
+PIDFILE="${TRIM_PKGVAR}/web.pid"
+LOGFILE="${TRIM_PKGVAR}/web.log"
+
+mkdir -p "${TRIM_PKGVAR}/logs"
+
+is_running() {
+    [ -f "${PIDFILE}" ] || return 1
+    PID="$(cat "${PIDFILE}" 2>/dev/null)"
+    [ -n "${PID}" ] && kill -0 "${PID}" 2>/dev/null
+}
+
+start() {
+    if is_running; then
+        exit 0
+    fi
+    rm -f "${SOCK}"
+    nohup "${BIN}" --data-dir "${DATA}" serve \
+        --www-dir "${WWW}" \
+        --unix-socket "${SOCK}" >> "${LOGFILE}" 2>&1 &
+    echo $! > "${PIDFILE}"
+    sleep 1
+    if is_running; then
+        exit 0
+    fi
+    echo "YuLink Web 启动失败，请查看 ${LOGFILE}" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+}
+
+stop() {
+    if [ -f "${PIDFILE}" ]; then
+        PID="$(cat "${PIDFILE}" 2>/dev/null)"
+        if [ -n "${PID}" ] && kill -0 "${PID}" 2>/dev/null; then
+            kill "${PID}" 2>/dev/null || true
+            for _ in 1 2 3 4 5; do
+                kill -0 "${PID}" 2>/dev/null || break
+                sleep 1
+            done
+            kill -9 "${PID}" 2>/dev/null || true
+        fi
+        rm -f "${PIDFILE}"
+    fi
+    rm -f "${SOCK}"
+    exit 0
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    status) is_running && exit 0 || exit 3 ;;
+    *) exit 1 ;;
+esac

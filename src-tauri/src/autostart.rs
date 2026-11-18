@@ -138,7 +138,13 @@ pub fn parse_registered_exe(raw: &str) -> String {
     // 只把 ASCII 转小写，保证下标与原文一致（用于按字节切片）。
     let lowered: String = raw
         .chars()
-        .map(|c| if c.is_ascii() { c.to_ascii_lowercase() } else { c })
+        .map(|c| {
+            if c.is_ascii() {
+                c.to_ascii_lowercase()
+            } else {
+                c
+            }
+        })
         .collect();
     match lowered.find(".exe") {
         Some(idx) => raw[..idx + 4].to_string(),
@@ -282,7 +288,10 @@ mod tests {
             "C:\\a b\\YuLink.exe"
         );
         // 旧版不带引号：路径后面可能跟着参数或尾随空格
-        assert_eq!(parse_registered_exe("C:\\a\\YuLink.exe "), "C:\\a\\YuLink.exe");
+        assert_eq!(
+            parse_registered_exe("C:\\a\\YuLink.exe "),
+            "C:\\a\\YuLink.exe"
+        );
         assert_eq!(
             parse_registered_exe("C:\\a\\YuLink.EXE --minimized"),
             "C:\\a\\YuLink.EXE"
@@ -294,7 +303,10 @@ mod tests {
     fn compares_paths_loosely() {
         assert!(same_exe("C:\\Tools\\YuLink.exe", "c:/tools/yulink.exe"));
         assert!(same_exe("C:\\Tools\\YuLink.exe\\", "C:\\Tools\\YuLink.exe"));
-        assert!(same_exe("\"C:\\Tools\\YuLink.exe\"", "C:\\Tools\\YuLink.exe"));
+        assert!(same_exe(
+            "\"C:\\Tools\\YuLink.exe\"",
+            "C:\\Tools\\YuLink.exe"
+        ));
         assert!(!same_exe("C:\\Tools\\YuLinkc.exe", "C:\\Tools\\YuLink.exe"));
         assert!(!same_exe("", "C:\\Tools\\YuLink.exe"));
     }

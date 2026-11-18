@@ -44,17 +44,13 @@ impl LoginOutcome {
         match &self.kind {
             LoginOutcomeKind::Ok => "登录成功".into(),
             LoginOutcomeKind::AlreadyOnline => "认证页显示已登录（检测到注销按钮）".into(),
-            LoginOutcomeKind::LoginFormPresent => {
-                "认证页需要登录（检测模式，未执行登录）".into()
-            }
+            LoginOutcomeKind::LoginFormPresent => "认证页需要登录（检测模式，未执行登录）".into(),
             LoginOutcomeKind::Preempted => "仅检测巡检已让位给手动登录".into(),
             LoginOutcomeKind::CredentialsFailed(msg) => format!("认证失败：{msg}"),
             LoginOutcomeKind::SmsCodeFailed(msg) => format!("动态密码错误：{msg}"),
             LoginOutcomeKind::PageError(msg) => format!("认证页异常：{msg}"),
             LoginOutcomeKind::Timeout => "登录超时".into(),
-            LoginOutcomeKind::EvalNoResponse => {
-                "认证页无响应（网络不可达或门户不可访问）".into()
-            }
+            LoginOutcomeKind::EvalNoResponse => "认证页无响应（网络不可达或门户不可访问）".into(),
         }
     }
 }
@@ -77,8 +73,8 @@ pub fn run_login(
     let run_id = SESSION_SEQ.fetch_add(1, Ordering::Relaxed);
     let label = format!("auth-{run_id}");
     let (beacon_tx, beacon_rx) = mpsc::channel::<BeaconEvent>();
-    let beacon_port = spawn_beacon_listener(beacon_tx)
-        .map_err(|e| format!("信标服务启动失败: {e}"))?;
+    let beacon_port =
+        spawn_beacon_listener(beacon_tx).map_err(|e| format!("信标服务启动失败: {e}"))?;
     let beacon = format!("http://127.0.0.1:{beacon_port}/report");
 
     log::info!("开始登录会话 run#{run_id} -> {portal_url}");
@@ -114,7 +110,10 @@ pub fn run_login(
     let outcome = 'outer: loop {
         // 用户点了“立即登录”：本轮仅检测立刻收工，把窗口与时间让给真正的登录，
         // 否则手动登录要等这一轮巡检跑完（可能十几秒到几十秒）。
-        if abort.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+        if abort
+            .map(|flag| flag.load(Ordering::SeqCst))
+            .unwrap_or(false)
+        {
             break 'outer LoginOutcome {
                 kind: LoginOutcomeKind::Preempted,
             };

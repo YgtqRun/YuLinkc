@@ -1,0 +1,13 @@
+appname               = yulink
+version               = 1.1.0
+display_name          = 御连 YuLink
+desc                  = 校园网自动认证（飞牛统一网关版）
+source                = thirdparty
+platform              = x86
+maintainer            = YgtqRun
+distributor           = YgtqRun
+desktop_uidir         = ui
+desktop_applaunchname = yulink.main
+ctl_stop              = true
+checkport             = false
+disable_authorization_path = true

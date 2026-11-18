@@ -1,12 +1,32 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+// @ts-expect-error Node types are available in the Vite config runtime.
+import { fileURLToPath } from "node:url";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(() => ({
+export default defineConfig(({ mode }) => ({
   plugins: [vue()],
+  resolve: {
+    alias: {
+      "@platform": fileURLToPath(
+        new URL(
+          mode === "web" ? "./src/platform.web.ts" : "./src/platform.tauri.ts",
+          import.meta.url
+        )
+      ),
+    },
+  },
+  base: mode === "web" ? "./" : "/",
+  build:
+    mode === "web"
+      ? {
+          outDir: "dist-web",
+          emptyOutDir: true,
+        }
+      : undefined,
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

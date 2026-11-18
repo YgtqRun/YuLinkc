@@ -21,6 +21,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::auth_session::{run_login, LoginOutcomeKind};
 use crate::auth_window::AuthWindowVisibility;
+use crate::http_login;
 use crate::network;
 use crate::state::RuntimeState;
 use crate::store::ConfigState;
@@ -238,6 +239,192 @@ fn probe_external_any(primary: &str, per_url_timeout: Duration) -> (bool, Vec<St
     (false, reasons)
 }
 
+/// HTTP 新流程的精简巡检：
+/// 外网探活 → 选认证页 → checkPassStatus → login → chkstatus。
+///
+/// 不再使用 WebView2 的页面受理候选、page_ok_pending 暂停、external_restored
+/// 多轮确认和仅检测让位逻辑；HTTP 接口返回成功且 chkstatus 在线即视为成功。
+fn http_full_check(
+    app: &AppHandle,
+    force_login: bool,
+    ctx: &mut SchedCtx,
+    cfg: &crate::store::AppConfig,
+) -> u64 {
+    let state = app.state::<RuntimeState>();
+    let prefs = &cfg.preferences;
+    ctx.page_ok_pending = false;
+
+    if prefs.away_mode {
+        state.set(app, "away-mode", "离校模式：自动认证已暂停".into());
+        return 300;
+    }
+    if cfg.account.is_none() {
+        state.set(app, "unconfigured", "未配置账号，点击托盘打开设置".into());
+        return 60;
+    }
+
+    if !force_login {
+        let (online, reasons) =
+            probe_external_any(&prefs.external_probe_url, EXTERNAL_PROBE_TIMEOUT);
+        if online {
+            ctx.external_fail = 0;
+            ctx.login_fail = 0;
+            ctx.first_connect_done = true;
+            state.set(app, "connected", "已连接".into());
+            maybe_quit_after_connect(app, prefs.quit_after_first_connect);
+            return prefs.check_interval_online_sec.max(10);
+        }
+        log::info!("HTTP 巡检外网探活失败：{}", reasons.join("；"));
+        if ctx.external_fail < OFFLINE_GATE_FAILS && !mock_portal_mode() {
+            log::info!(
+                "外网失败未达连续阈值（{}/{}），暂不自动登录",
+                ctx.external_fail,
+                OFFLINE_GATE_FAILS
+            );
+            return GATE_HOLD_SEC;
+        }
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    if !cfg.sms_valid_at(now) {
+        state.set(app, "needs-sms", "动态密码缺失或已过期".into());
+        return 60;
+    }
+
+    let medium = network::detect_medium().unwrap_or(network::Medium::Other);
+    let candidates = portal_candidates(medium, prefs);
+    let portal = if force_login {
+        log::info!(
+            "手动触发 HTTP 登录（介质: {}, 候选认证页: {}）",
+            medium_display(medium),
+            candidates.join(", ")
+        );
+        candidates.first().cloned()
+    } else {
+        candidates
+            .iter()
+            .find(|url| network::http_ok(url, PORTAL_PROBE_TIMEOUT))
+            .cloned()
+    };
+    let Some(portal) = portal else {
+        state.set(
+            app,
+            "network-down",
+            format!(
+                "未检测到校园网认证页（已尝试 {}，请确认已连接校园网无线/有线）",
+                candidates.join(" / ")
+            ),
+        );
+        return prefs.check_interval_offline_sec.max(10);
+    };
+
+    let Some((account, password)) = cfg.account_password() else {
+        state.set(app, "unconfigured", "账号配置读取失败".into());
+        return 60;
+    };
+    let Some(sms_code) = cfg.sms_code() else {
+        state.set(app, "needs-sms", "动态密码缺失或已过期".into());
+        return 60;
+    };
+    let isp = cfg
+        .account
+        .as_ref()
+        .map(|a| a.isp.clone())
+        .unwrap_or_else(|| "2".into());
+    let detect_only = !force_login && !prefs.auto_relogin && ctx.first_connect_done;
+
+    state.set(
+        app,
+        "logging-in",
+        if detect_only {
+            "正在检测认证页状态（HTTP）".into()
+        } else {
+            "正在自动登录（HTTP）".into()
+        },
+    );
+
+    match http_login::run_http_login(&portal, &account, &password, &sms_code, &isp, detect_only) {
+        Ok(o) if o.kind == LoginOutcomeKind::AlreadyOnline => {
+            log::info!("HTTP 状态查询：已在线");
+            ctx.login_fail = 0;
+            if http_external_confirmed(app, &prefs.external_probe_url) {
+                ctx.external_fail = 0;
+                ctx.first_connect_done = true;
+                state.set(app, "connected", "已连接".into());
+                maybe_quit_after_connect(app, prefs.quit_after_first_connect);
+                prefs.check_interval_online_sec.max(10)
+            } else {
+                state.set(app, "failed", "认证页显示已在线，但外网确认未通过".into());
+                prefs.check_interval_offline_sec.max(10)
+            }
+        }
+        Ok(o) if o.is_ok() => {
+            log::info!("HTTP 登录成功");
+            ctx.login_fail = 0;
+            if http_external_confirmed(app, &prefs.external_probe_url) {
+                ctx.external_fail = 0;
+                ctx.first_connect_done = true;
+                state.set(app, "connected", "已连接".into());
+                maybe_quit_after_connect(app, prefs.quit_after_first_connect);
+                prefs.check_interval_online_sec.max(10)
+            } else {
+                state.set(app, "failed", "HTTP 登录成功，但外网确认未通过".into());
+                prefs.check_interval_offline_sec.max(10)
+            }
+        }
+        Ok(o) if o.kind == LoginOutcomeKind::LoginFormPresent => {
+            log::info!("{}（自动登录已关闭，仅检测）", o.message());
+            state.set(
+                app,
+                "network-down",
+                "网络已断开（自动登录已关闭，仅保留检测）".into(),
+            );
+            prefs.check_interval_offline_sec.max(10)
+        }
+        Ok(o) => {
+            ctx.login_fail = ctx.login_fail.saturating_add(1);
+            state.set(
+                app,
+                "failed",
+                format!(
+                    "{}（第 {} 次失败，按退避重试）",
+                    o.message(),
+                    ctx.login_fail
+                ),
+            );
+            backoff_secs(ctx.login_fail, prefs.login_max_retries)
+        }
+        Err(e) => {
+            ctx.login_fail = ctx.login_fail.saturating_add(1);
+            state.set(
+                app,
+                "failed",
+                format!(
+                    "HTTP 登录异常：{e}（第 {} 次失败，按退避重试）",
+                    ctx.login_fail
+                ),
+            );
+            backoff_secs(ctx.login_fail, prefs.login_max_retries)
+        }
+    }
+}
+
+/// HTTP 流程的一次性外网确认（主地址 + 备用 204，任一通过即可）。
+fn http_external_confirmed(app: &AppHandle, probe_url: &str) -> bool {
+    let state = app.state::<RuntimeState>();
+    state.set(app, "logging-in", "正在确认外网（HTTP）".into());
+    let (online, reasons) = probe_external_any(probe_url, EXTERNAL_PROBE_TIMEOUT);
+    if online {
+        log::info!("HTTP 外网确认通过：{}", reasons.join("；"));
+    } else {
+        log::warn!("HTTP 外网确认失败：{}", reasons.join("；"));
+    }
+    online
+}
+
 /// 执行一轮完整巡检，返回下一次完整巡检的等待秒数。
 fn full_check(
     app: &AppHandle,
@@ -249,6 +436,11 @@ fn full_check(
         Ok(g) => g.clone(),
         Err(_) => return 30,
     };
+    // HTTP 新流程不套 WebView2 的页面受理/多轮外网确认/让位逻辑，
+    // 单独走精简路径；旧流程保持不变。
+    if cfg.preferences.login_mode == "http" {
+        return http_full_check(app, force_login, ctx, &cfg);
+    }
     let state = app.state::<RuntimeState>();
     let prefs = &cfg.preferences;
 
@@ -367,6 +559,7 @@ fn full_check(
             "正在自动登录".into()
         },
     );
+    log::info!("登录方式：WebView2 旧流程");
     let outcome = run_login(
         app,
         &portal,
@@ -400,8 +593,7 @@ fn full_check(
             ctx.login_fail = 0;
             ctx.first_connect_done = true;
             // 已确认在线后再测一次外网：只影响状态文案，不阻止“已登录”结论。
-            let confirmed =
-                mock_portal_mode() || external_restored(app, &prefs.external_probe_url);
+            let confirmed = mock_portal_mode() || external_restored(app, &prefs.external_probe_url);
             if confirmed {
                 ctx.external_fail = 0;
                 state.set(app, "connected", "已连接".into());
@@ -427,8 +619,7 @@ fn full_check(
         Ok(o) if o.is_ok() => {
             log::info!("认证页确认登录成功（{}）", o.message());
             // 最终判定归 Rust：外网探测通过才是“已连接”。
-            let confirmed =
-                mock_portal_mode() || external_restored(app, &prefs.external_probe_url);
+            let confirmed = mock_portal_mode() || external_restored(app, &prefs.external_probe_url);
             if confirmed {
                 ctx.external_fail = 0;
                 ctx.login_fail = 0;
@@ -473,11 +664,7 @@ fn full_check(
         }
         Err(e) => {
             if detect_only {
-                state.set(
-                    app,
-                    "network-down",
-                    format!("网络未就绪（检测模式）：{e}"),
-                );
+                state.set(app, "network-down", format!("网络未就绪（检测模式）：{e}"));
                 return prefs.check_interval_offline_sec.max(10);
             }
             ctx.page_ok_pending = false;
@@ -485,7 +672,10 @@ fn full_check(
             state.set(
                 app,
                 "failed",
-                format!("登录会话异常：{e}（第 {} 次失败，按退避重试）", ctx.login_fail),
+                format!(
+                    "登录会话异常：{e}（第 {} 次失败，按退避重试）",
+                    ctx.login_fail
+                ),
             );
         }
     }
@@ -553,7 +743,10 @@ mod tests {
         tx.send(SchedMessage::LoginNow).unwrap();
 
         let mut force_login = false;
-        assert!(matches!(drain_requests(&rx, &mut force_login), Drain::Awake));
+        assert!(matches!(
+            drain_requests(&rx, &mut force_login),
+            Drain::Awake
+        ));
         assert!(force_login, "队列里有 LoginNow 时必须按强制登录执行");
         // 消息已被一次性取空，不会留下一轮多余的普通巡检
         let mut again = false;
@@ -567,7 +760,10 @@ mod tests {
         tx.send(SchedMessage::CheckNow).unwrap();
 
         let mut force_login = false;
-        assert!(matches!(drain_requests(&rx, &mut force_login), Drain::Awake));
+        assert!(matches!(
+            drain_requests(&rx, &mut force_login),
+            Drain::Awake
+        ));
         assert!(!force_login);
     }
 
@@ -576,14 +772,14 @@ mod tests {
         let (tx, rx) = mpsc::channel::<SchedMessage>();
         drop(tx);
         let mut force_login = false;
-        assert!(matches!(drain_requests(&rx, &mut force_login), Drain::Closed));
+        assert!(matches!(
+            drain_requests(&rx, &mut force_login),
+            Drain::Closed
+        ));
     }
 }
 
-fn portal_candidates(
-    medium: network::Medium,
-    prefs: &crate::store::Preferences,
-) -> Vec<String> {
+fn portal_candidates(medium: network::Medium, prefs: &crate::store::Preferences) -> Vec<String> {
     let wireless = prefs.portal_wireless.clone();
     let wired = prefs.portal_wired.clone();
     match medium {

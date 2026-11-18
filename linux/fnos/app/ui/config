@@ -1,0 +1,17 @@
+{
+  ".url": {
+    "yulink.main": {
+      "title": "御连 YuLink",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "gatewayPrefix": "/app/yulink",
+      "gatewaySocket": "app.sock",
+      "protocol": "",
+      "url": "/app/yulink/",
+      "allUsers": false,
+      "control": {
+        "accessPerm": "readonly"
+      }
+    }
+  }
+}

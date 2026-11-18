@@ -4,11 +4,9 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-use crate::store::{
-    AppConfig, ConfigPaths, ConfigState, PERMANENT_HOURS,
-};
 use crate::scheduler::Scheduler;
 use crate::state::{RuntimeState, StatusPayload};
+use crate::store::{AppConfig, ConfigPaths, ConfigState, PERMANENT_HOURS};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +28,8 @@ pub struct SettingsView {
     pub quit_after_first_connect: bool,
     /// 主题：system = 跟随系统，light = 浅色，dark = 暗色
     pub theme: String,
+    /// 登录方式：http = Dr.COM 直连新流程，webview = 旧 WebView2 流程
+    pub login_mode: String,
     pub portal_wireless: String,
     pub portal_wired: String,
     pub status: StatusView,
@@ -84,6 +84,8 @@ pub struct SaveSettingsRequest {
     pub quit_after_first_connect: Option<bool>,
     /// 主题：仅接受 system / light / dark，其它取值按「跟随系统」处理
     pub theme: Option<String>,
+    /// 登录方式：http / webview
+    pub login_mode: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -128,11 +130,7 @@ fn build_view(cfg: &AppConfig) -> SettingsView {
         isp: account.map(|a| a.isp.clone()).unwrap_or_else(|| "2".into()),
         has_sms_code,
         sms_code: sms.unwrap_or_default(),
-        sms_hours: cfg
-            .sms_code
-            .as_ref()
-            .map(|s| s.hours)
-            .unwrap_or(27.0),
+        sms_hours: cfg.sms_code.as_ref().map(|s| s.hours).unwrap_or(27.0),
         sms_saved_at: cfg.sms_code.as_ref().map(|s| s.saved_at).unwrap_or(0),
         sms_status_text: cfg.sms_status_text(now),
         autostart: cfg.preferences.autostart,
@@ -142,6 +140,7 @@ fn build_view(cfg: &AppConfig) -> SettingsView {
         auto_relogin: cfg.preferences.auto_relogin,
         quit_after_first_connect: cfg.preferences.quit_after_first_connect,
         theme: cfg.preferences.theme.clone(),
+        login_mode: cfg.preferences.login_mode.clone(),
         portal_wireless: cfg.preferences.portal_wireless.clone(),
         portal_wired: cfg.preferences.portal_wired.clone(),
         status: StatusView {
@@ -164,9 +163,7 @@ fn save_config(
 }
 
 #[tauri::command]
-pub fn get_settings(
-    config_state: State<'_, ConfigState>,
-) -> Result<SettingsView, String> {
+pub fn get_settings(config_state: State<'_, ConfigState>) -> Result<SettingsView, String> {
     log::info!("设置界面读取配置");
     let cfg = config_state
         .0
@@ -240,6 +237,9 @@ pub fn save_settings(
     if let Some(theme) = req.theme {
         cfg.preferences.theme = crate::store::normalize_theme(&theme);
     }
+    if let Some(mode) = req.login_mode {
+        cfg.preferences.login_mode = crate::store::normalize_login_mode(&mode);
+    }
 
     save_config(&cfg, &paths, &config_state)?;
     // 配置变更后让调度器立即按新配置巡检（离校模式/网址立即生效）
@@ -281,14 +281,16 @@ pub fn clear_all(
 }
 
 #[tauri::command]
-pub fn set_autostart(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<CommandResult, String> {
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<CommandResult, String> {
     crate::tray::set_autostart(&app, enabled)?;
     Ok(CommandResult {
         ok: true,
-        message: if enabled { "开机自启已开启" } else { "开机自启已关闭" }.into(),
+        message: if enabled {
+            "开机自启已开启"
+        } else {
+            "开机自启已关闭"
+        }
+        .into(),
     })
 }
 

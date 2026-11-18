@@ -9,7 +9,7 @@
 //!    每小时每 IP，校园网出口 IP 共享时容易被打满，所以只在没有清单时才走。
 //!
 //! `version.json` 只要有 `version` 即可，另外支持可选的 `notes` 与 `url`
-//! （例如 `{"version":"1.0.2","notes":"修复 xxx","url":"https://.../tag/v1.0.2"}`）。
+//! （例如 `{"version":"1.1.0","notes":"修复 xxx","url":"https://.../tag/v1.1.0"}`）。
 //! Tauri 官方 updater 生成的 `latest.json` 也能识别（同样有 `version` / `notes`）。
 //!
 //! 网络走 WinHTTP（系统自带 TLS 与代理设置），不额外引入 HTTP 依赖。

@@ -1,0 +1,20 @@
+[Unit]
+Description=YuLink campus network web settings
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ygtq
+Group=Users
+WorkingDirectory=/vol1/1000/yulink
+Environment=HOME=/vol1/1000
+ExecStart=/vol1/1000/yulink/bin/yulink-linux --data-dir /vol1/1000/yulink/data serve --www-dir /vol1/1000/yulink/www --bind 0.0.0.0 --port 8080
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+StandardOutput=append:/vol1/1000/yulink/data/logs/web.out.log
+StandardError=append:/vol1/1000/yulink/data/logs/web.err.log
+
+[Install]
+WantedBy=multi-user.target

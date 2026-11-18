@@ -1,0 +1,127 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的版本标签，例如 v1.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Windows bundles
+        run: npm run tauri build
+
+      - name: Collect Windows assets
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item "src-tauri/target/release/bundle/nsis/yulink_${version}_x64-setup.exe" "release-assets/yulink_${version}_x64-setup.exe"
+          Copy-Item "src-tauri/target/release/bundle/msi/yulink_${version}_x64_en-US.msi" "release-assets/yulink_${version}_x64_en-US.msi"
+          Copy-Item "src-tauri/target/release/yulink.exe" "release-assets/yulink.v${version}.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build Linux binary
+        working-directory: linux
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Build web settings page
+        run: |
+          npm ci
+          npm run build:web
+
+      - name: Assemble fnOS package
+        run: |
+          VERSION=$(awk -F= '/^version/ {gsub(/[[:space:]]/, "", $2); print $2}' linux/fnos/manifest)
+          mkdir -p build/fnos release-assets
+          cp -a linux/fnos/. build/fnos/
+          rm -f build/fnos/app/server/.gitkeep build/fnos/app/www/.gitkeep
+          cp linux/target/x86_64-unknown-linux-musl/release/yulink-linux build/fnos/app/server/yulink-linux
+          cp -a dist-web/. build/fnos/app/www/
+          chmod +x build/fnos/app/server/yulink-linux build/fnos/cmd/*
+          tar -czf "release-assets/yulink_${VERSION}_x86.fpk" -C build/fnos .
+          cp linux/target/x86_64-unknown-linux-musl/release/yulink-linux release-assets/yulink-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Write version manifest
+        run: |
+          cat > "assets/version.json" <<EOF
+          {"version":"${{ steps.meta.outputs.version }}","url":"https://github.com/${GITHUB_REPOSITORY}/releases/tag/${{ steps.meta.outputs.tag }}","notes":"新增 Dr.COM HTTP 直连登录流程；新增 Linux 与飞牛 OS 版本"}
+          EOF
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: v${{ steps.meta.outputs.version }}
+          generate_release_notes: true
+          files: assets/*

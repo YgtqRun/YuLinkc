@@ -18,10 +18,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::bridge::{read_request_head, spawn_beacon_listener, BeaconEvent};
 use crate::auth_window::{
     cleanup_auth_windows, create_auth_window, destroy_auth_window, AuthWindowVisibility,
 };
+use crate::bridge::{read_request_head, spawn_beacon_listener, BeaconEvent};
 use crate::store::ConfigState;
 use tauri::{AppHandle, Manager};
 
@@ -92,8 +92,8 @@ struct Scenario {
 pub fn run_poc(app: &AppHandle) -> Result<(), String> {
     let mock_port = spawn_mock_server().map_err(|e| format!("mock 服务启动失败: {e}"))?;
     let (beacon_tx, beacon_rx) = mpsc::channel::<BeaconEvent>();
-    let beacon_port = spawn_beacon_listener(beacon_tx)
-        .map_err(|e| format!("信标服务启动失败: {e}"))?;
+    let beacon_port =
+        spawn_beacon_listener(beacon_tx).map_err(|e| format!("信标服务启动失败: {e}"))?;
 
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.hide();
@@ -191,13 +191,7 @@ pub fn run_poc(app: &AppHandle) -> Result<(), String> {
                 expected = scenario.expected
             );
             match run_single(
-                app,
-                &beacon_rx,
-                &base_url,
-                &beacon,
-                scenario,
-                run_id,
-                visibility,
+                app, &beacon_rx, &base_url, &beacon, scenario, run_id, visibility,
             ) {
                 Ok(actual) => {
                     if actual == scenario.expected {

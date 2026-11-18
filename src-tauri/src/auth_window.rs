@@ -48,10 +48,11 @@ pub fn create_auth_window(
     let label_owned = label.to_string();
 
     app.run_on_main_thread(move || {
-        let mut builder = WebviewWindowBuilder::new(&app2, label_owned, WebviewUrl::External(parsed))
-            .title("YuLink Auth")
-            .inner_size(900.0, 700.0)
-            .visible(true);
+        let mut builder =
+            WebviewWindowBuilder::new(&app2, label_owned, WebviewUrl::External(parsed))
+                .title("YuLink Auth")
+                .inner_size(900.0, 700.0)
+                .visible(true);
 
         builder = match visibility {
             AuthWindowVisibility::Visible => builder

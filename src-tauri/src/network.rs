@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS};
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetAdaptersAddresses, GetBestInterface, GET_ADAPTERS_ADDRESSES_FLAGS,
-    IF_TYPE_ETHERNET_CSMACD, IF_TYPE_IEEE80211, IP_ADAPTER_ADDRESSES_LH,
+    GetAdaptersAddresses, GetBestInterface, GET_ADAPTERS_ADDRESSES_FLAGS, IF_TYPE_ETHERNET_CSMACD,
+    IF_TYPE_IEEE80211, IP_ADAPTER_ADDRESSES_LH,
 };
-use windows::Win32::NetworkManagement::Ndis::{IF_OPER_STATUS, IfOperStatusUp};
+use windows::Win32::NetworkManagement::Ndis::{IfOperStatusUp, IF_OPER_STATUS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Medium {
@@ -89,11 +89,25 @@ pub fn http_get(url: &str, timeout: Duration) -> Option<(u16, String)> {
     http_get_limit(url, timeout, 8192)
 }
 
+/// 执行带 Referer 的 HTTP GET，供 Dr.COM 直连登录使用。
+pub fn http_get_with_referer(
+    url: &str,
+    timeout: Duration,
+    referer: Option<&str>,
+) -> Option<(u16, String)> {
+    http_get_limit_inner(url, timeout, 16384, referer)
+}
+
 /// 执行 HTTP GET 并读取最多 `max_bytes` 字节正文，自动跟随最多 4 次 3xx 重定向。
-pub fn http_get_limit(
+pub fn http_get_limit(url: &str, timeout: Duration, max_bytes: usize) -> Option<(u16, String)> {
+    http_get_limit_inner(url, timeout, max_bytes, None)
+}
+
+fn http_get_limit_inner(
     url: &str,
     timeout: Duration,
     max_bytes: usize,
+    referer: Option<&str>,
 ) -> Option<(u16, String)> {
     let mut current = url.to_string();
     for _hop in 0..5 {
@@ -101,17 +115,31 @@ pub fn http_get_limit(
             log::warn!("探活 URL 无法解析（仅支持 http）: {current}");
             return None;
         };
-        let addr =
-            match (host.as_str(), port).to_socket_addrs().ok().and_then(|mut it| it.next()) {
-                Some(a) => a,
-                None => return None,
-            };
+        let addr = match (host.as_str(), port)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut it| it.next())
+        {
+            Some(a) => a,
+            None => return None,
+        };
         let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
             Ok(s) => s,
             Err(_) => return None,
         };
         let _ = stream.set_read_timeout(Some(timeout));
-        let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+        let host_header = if port == 80 {
+            host.clone()
+        } else {
+            format!("{host}:{port}")
+        };
+        let mut req = format!(
+            "GET {path} HTTP/1.0\r\nHost: {host_header}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36\r\nAccept: */*\r\n"
+        );
+        if let Some(referer) = referer {
+            req.push_str(&format!("Referer: {referer}\r\n"));
+        }
+        req.push_str("Connection: close\r\n\r\n");
         if stream.write_all(req.as_bytes()).is_err() {
             return None;
         }
@@ -195,16 +223,14 @@ fn first_text_snippet(body: &str) -> String {
 /// 大小写不敏感地查找响应头字段（请求/响应行之外的 Header 行）。
 fn find_header(text: &str, name: &str) -> Option<String> {
     let lower = name.to_ascii_lowercase();
-    text.lines()
-        .skip(1)
-        .find_map(|line| {
-            let (key, value) = line.split_once(':')?;
-            if key.trim().to_ascii_lowercase() == lower {
-                Some(value.trim().to_string())
-            } else {
-                None
-            }
-        })
+    text.lines().skip(1).find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        if key.trim().to_ascii_lowercase() == lower {
+            Some(value.trim().to_string())
+        } else {
+            None
+        }
+    })
 }
 
 /// 解析 Location 头：绝对 http:// 直接使用；其余基于当前 URL 简单拼接。
@@ -234,9 +260,7 @@ fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
         None => (rest, "/".to_string()),
     };
     let (host, port) = match host_port.rsplit_once(':') {
-        Some((h, p)) if !h.is_empty() => {
-            (h.to_string(), p.parse::<u16>().ok()?)
-        }
+        Some((h, p)) if !h.is_empty() => (h.to_string(), p.parse::<u16>().ok()?),
         _ => (host_port.to_string(), 80u16),
     };
     Some((host, port, path))

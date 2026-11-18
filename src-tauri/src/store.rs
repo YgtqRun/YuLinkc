@@ -11,7 +11,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{LocalFree, HLOCAL};
 use windows::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+    CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
 
 const CONFIG_FILE: &str = "config.json";
@@ -95,6 +95,8 @@ pub struct Preferences {
     pub quit_after_first_connect: bool,
     /// 设置页“主题”：`system` = 跟随系统，`light` = 浅色，`dark` = 暗色。
     pub theme: String,
+    /// 登录方式：`http` = Dr.COM 直连新流程，`webview` = 旧 WebView2 流程。
+    pub login_mode: String,
 }
 
 impl Default for AppConfig {
@@ -161,6 +163,7 @@ impl Default for Preferences {
             auto_relogin: true,
             quit_after_first_connect: false,
             theme: "system".into(),
+            login_mode: "http".into(),
         }
     }
 }
@@ -172,6 +175,14 @@ pub fn normalize_theme(raw: &str) -> String {
         "light" => "light".to_string(),
         "dark" => "dark".to_string(),
         _ => "system".to_string(),
+    }
+}
+
+/// 登录方式规范化：默认新流程 HTTP，显式 `webview` 才回退旧流程。
+pub fn normalize_login_mode(raw: &str) -> String {
+    match raw.trim() {
+        "webview" => "webview".to_string(),
+        _ => "http".to_string(),
     }
 }
 
@@ -199,15 +210,19 @@ impl AppConfig {
             if p.get("theme").is_none() {
                 p["theme"] = serde_json::json!("system");
             }
+            if p.get("loginMode").is_none() {
+                p["loginMode"] = serde_json::json!("http");
+            }
         }
-        let mut cfg: AppConfig = serde_json::from_value(root)
-            .map_err(|e| format!("解析配置失败: {e}"))?;
+        let mut cfg: AppConfig =
+            serde_json::from_value(root).map_err(|e| format!("解析配置失败: {e}"))?;
         // 旧配置文件没有 logout 字段时补默认值（serde(default) 会给空串）。
         if cfg.selectors.logout.is_empty() {
             cfg.selectors.logout = Selectors::default().logout;
         }
         // 主题同样兜底：字段缺失/取值异常都按“跟随系统”处理。
         cfg.preferences.theme = normalize_theme(&cfg.preferences.theme);
+        cfg.preferences.login_mode = normalize_login_mode(&cfg.preferences.login_mode);
         Ok(cfg)
     }
 
@@ -309,10 +324,7 @@ impl AppConfig {
 #[allow(dead_code)]
 fn encrypt_secret(plain: &[u8]) -> Result<String, String> {
     let input = CRYPT_INTEGER_BLOB {
-        cbData: plain
-            .len()
-            .try_into()
-            .map_err(|_| "明文过长".to_string())?,
+        cbData: plain.len().try_into().map_err(|_| "明文过长".to_string())?,
         pbData: plain.as_ptr() as *mut u8,
     };
     let mut out = CRYPT_INTEGER_BLOB::default();
@@ -328,8 +340,7 @@ fn encrypt_secret(plain: &[u8]) -> Result<String, String> {
         )
         .map_err(|e| format!("CryptProtectData 失败: {e}"))?;
     }
-    let encrypted =
-        unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize) }.to_vec();
+    let encrypted = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize) }.to_vec();
     unsafe {
         let _ = LocalFree(Some(HLOCAL(out.pbData as *mut _)));
     }
@@ -341,8 +352,9 @@ fn decrypt_secret(secret: &str) -> Result<Vec<u8>, String> {
     let payload = secret
         .strip_prefix(DPAPI_PREFIX)
         .ok_or_else(|| "密文缺少 dpapi:v1: 前缀".to_string())?;
-    let encrypted =
-        BASE64.decode(payload).map_err(|e| format!("base64 解码失败: {e}"))?;
+    let encrypted = BASE64
+        .decode(payload)
+        .map_err(|e| format!("base64 解码失败: {e}"))?;
 
     let input = CRYPT_INTEGER_BLOB {
         cbData: encrypted
@@ -378,10 +390,7 @@ mod tests {
 
     #[test]
     fn config_roundtrip_in_temp_dir() {
-        let dir = std::env::temp_dir().join(format!(
-            "yulink-store-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("yulink-store-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -414,13 +423,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn login_mode_defaults_to_http_and_allows_webview() {
+        assert_eq!(AppConfig::default().preferences.login_mode, "http");
+        assert_eq!(normalize_login_mode("http"), "http");
+        assert_eq!(normalize_login_mode("webview"), "webview");
+        assert_eq!(normalize_login_mode(""), "http");
+        assert_eq!(normalize_login_mode("unknown"), "http");
+    }
+
     /// 旧配置文件没有 theme 字段时，加载后应按“跟随系统”补齐并写回。
     #[test]
     fn legacy_config_without_theme_loads_as_system() {
-        let dir = std::env::temp_dir().join(format!(
-            "yulink-theme-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("yulink-theme-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(

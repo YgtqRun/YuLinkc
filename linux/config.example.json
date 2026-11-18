@@ -1,0 +1,17 @@
+{
+  "portalWireless": "http://172.26.255.2/",
+  "portalWired": "http://172.26.255.3/",
+  "eportalPort": 801,
+  "username": "your-account",
+  "password": "your-password",
+  "smsCode": "123456",
+  "smsSavedAt": 0,
+  "smsHours": 27.0,
+  "isp": "2",
+  "externalProbe": "http://www.msftconnecttest.com/connecttest.txt",
+  "checkIntervalOnlineSec": 120,
+  "checkIntervalOfflineSec": 30,
+  "autoRelogin": true,
+  "awayMode": false,
+  "theme": "system"
+}

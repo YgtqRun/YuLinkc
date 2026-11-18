@@ -5,6 +5,9 @@
     "module": "ESNext",
     "lib": ["ES2020", "DOM"],
     "skipLibCheck": true,
+    "paths": {
+      "@platform": ["./src/platform.tauri.ts"]
+    },
 
     /* Bundler mode */
     "moduleResolution": "bundler",

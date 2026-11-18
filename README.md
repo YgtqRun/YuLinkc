@@ -1,10 +1,10 @@
 # 御连 YuLink
 
-面向校园网的 Windows 常驻自动认证程序。开机后无需打开浏览器，程序会用系统内置的
-WebView2 在后台访问校园网认证页，像油猴脚本一样自动填表登录；断线后自动恢复，
-已在线时能识别“注销按钮”并跳过重复登录。
+面向校园网的自动认证程序。Windows 版常驻托盘，默认直接请求 Dr.COM 接口完成登录，
+并保留隐藏 WebView2 填表流程；Linux / 飞牛 OS 版提供无界面常驻服务和 Web 设置页。
+断线后自动恢复，已在线时不会重复登录。
 
-> 当前版本：v1.0.2
+> 当前版本：v1.1.0
 
 > ⚠️ **仅支持暨阳学院的校园网认证**。默认认证页（无线 `http://172.26.255.2/`、
 > 有线 `http://172.26.255.3/`）及页面元素选择器均针对暨阳学院门户定制；
@@ -12,8 +12,8 @@ WebView2 在后台访问校园网认证页，像油猴脚本一样自动填表�
 
 ## 功能特性
 
-- **后台自动登录**：隐藏 WebView2 加载门户 → 注入填表脚本 → 本地信标回传结果；
-  不对门户接口做逆向，不依赖抓包/POST 模拟。
+- **后台自动登录**：默认直接请求 Dr.COM 认证接口完成登录；旧 WebView2 隐藏窗口
+  填表流程保留，可在设置页切换；切换后下一轮巡检立即生效。
 - **介质自适应**：识别当前承载默认路由的网卡——Wi-Fi 走无线认证页
   `http://172.26.255.2/`，有线走 `http://172.26.255.3/`（可在设置中修改）。
 - **实时网络感知**：8 秒轻量心跳探测网络翻转，连续失败才认定离线，避免单次
@@ -34,13 +34,21 @@ WebView2 在后台访问校园网认证页，像油猴脚本一样自动填表�
 
 ## 安装
 
-从 [Releases](https://github.com/YgtqRun/YuLinkc/releases) 下载 v1.0.2 产物：
+从 [Releases](https://github.com/YgtqRun/YuLinkc/releases) 下载 v1.1.0 产物：
 
-- `yulink_1.0.2_x64-setup.exe`（NSIS 安装包，推荐）
-- `yulink_1.0.2_x64_en-US.msi`（MSI）
-- `yulink.v1.0.2.exe`（免安装单文件）
+- `yulink_1.1.0_x64-setup.exe`（Windows NSIS 安装包，推荐）
+- `yulink_1.1.0_x64_en-US.msi`（Windows MSI）
+- `yulink.v1.1.0.exe`（Windows 免安装单文件）
+- `yulink-linux-x86_64`（Linux 静态二进制，适合 systemd / 容器）
+- `yulink_1.1.0_x86.fpk`（飞牛 OS 应用包，Web 设置页走统一网关）
 
-前置依赖：Windows 10/11 自带的 WebView2 Runtime（绝大多数系统已内置）。
+Windows 前置依赖：Windows 10/11 自带的 WebView2 Runtime（绝大多数系统已内置）。
+
+Linux / 飞牛 OS 版不依赖 WebView2 和 DPAPI，使用纯 HTTP 登录：
+
+- Linux 解压后运行 `yulink-linux init`，再运行 `serve` 即可打开 Web 设置页；
+- 飞牛 OS 在应用中心安装 FPK 后，从桌面图标或统一网关 `/app/yulink/` 打开；
+- 详细配置、systemd 与 Docker 用法见 [`linux/README.md`](linux/README.md)。
 
 ## 快速开始
 
@@ -69,9 +77,13 @@ WebView2 在后台访问校园网认证页，像油猴脚本一样自动填表�
 | 断网自动重试 | 开：掉线后一直自动重登；关：仅开机后自动登录到首次成功，之后只保留心跳检测与状态提示 |
 | 连接成功后退出 | 开机后首次连接成功即退出程序；开启时“断网自动重试”置灰（互斥） |
 | 主题 | 跟随系统 / 浅色 / 暗色；跟随系统时随 Windows 的浅色/暗色设置实时切换 |
+| 登录方式 | HTTP（新，默认）：直接请求 Dr.COM 接口；WebView2（旧）：隐藏窗口填表登录 |
 | 无线/有线认证网址 | 按介质选择认证页 |
 
 ## 登录判定流程
+
+默认 HTTP 模式直接执行 `chkstatus` → `checkPassStatus` → `login` → `chkstatus`，
+成功后做一次外网确认。以下为切回 WebView2 旧模式时的流程：
 
 ```text
 外网探活失败（多端点，连续 2 次）
@@ -107,7 +119,7 @@ WebView2 在后台访问校园网认证页，像油猴脚本一样自动填表�
    `https://github.com/YgtqRun/YuLinkc/releases/latest/download/version.json`
 
    ```json
-   { "version": "1.0.2", "notes": "修了 xxx", "url": "https://github.com/YgtqRun/YuLinkc/releases/tag/v1.0.2" }
+   { "version": "1.1.0", "notes": "修了 xxx", "url": "https://github.com/YgtqRun/YuLinkc/releases/tag/v1.1.0" }
    ```
 
    只有 `version` 是必需的；`url` 缺省时点击会跳到 Releases 页面。tauri-action 生成的
@@ -121,7 +133,7 @@ WebView2 在后台访问校园网认证页，像油猴脚本一样自动填表�
 
 ## 从源码构建
 
-环境要求：Rust stable、Node.js 18+、WebView2 Runtime。
+Windows 环境要求：Rust stable、Node.js 18+、WebView2 Runtime。
 
 ```powershell
 npm install
@@ -130,6 +142,19 @@ npm run tauri build   # 打包
 ```
 
 打包产物位于 `src-tauri\target\release\bundle\`。
+
+Linux / 飞牛 OS 版：
+
+```bash
+cd linux
+cargo build --release --target x86_64-unknown-linux-musl
+cd ..
+npm run build:web
+```
+
+把 `linux/target/x86_64-unknown-linux-musl/release/yulink-linux` 与 `dist-web/`
+分别放入 FPK 的 `app/server/` 和 `app/www/`；标签发布时
+`.github/workflows/release.yml` 会自动完成这一步。
 
 > 注意：仓库不纳入本地联调素材（`docs/`、`mock/`、`scripts/`、`实现方案.md`、
 > `登录脚本.js`）。其中 `mock/wired.html` 与 `mock/wireless.html` 是 POC/E2E
@@ -140,6 +165,7 @@ npm run tauri build   # 打包
 ```text
 src/                     Vue 3 设置界面
 src-tauri/src/           调度、网络探活、认证窗口、登录会话、配置存储
+linux/                   无界面 HTTP 客户端、Web API 与飞牛 OS 包结构
 assets/auth/auth.js      认证页注入脚本（填表/注销按钮识别）
 public/                  前端静态资源
 ```

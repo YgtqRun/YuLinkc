@@ -26,11 +26,10 @@ static EXIT_PENDING: AtomicBool = AtomicBool::new(false);
 pub fn setup(app: &AppHandle<Wry>) -> Result<(), String> {
     let login = MenuItem::with_id(app, "login", "立即登录", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
+    let quit =
+        MenuItem::with_id(app, "quit", "退出", true, None::<&str>).map_err(|e| e.to_string())?;
 
-    let menu = Menu::with_items(app, &[&login, &quit])
-        .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(app, &[&login, &quit]).map_err(|e| e.to_string())?;
     let icon = app
         .default_window_icon()
         .cloned()
