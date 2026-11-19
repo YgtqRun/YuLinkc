@@ -102,7 +102,12 @@ Web API：
 
 ## 开机自启
 
-仓库内的 `yulink-web.service` 是当前 NAS 使用的 systemd 模板：
+飞牛 OS 的 FPK 由 `fnos/cmd/main` 管理生命周期，开机时会同时启动
+`serve`（Web 设置页）和 `run`（心跳 + 自动重登），修改配置后会自动重启
+`run` 进程。
+
+仓库内的 `yulink-web.service` 只用于旧版（非 FPK）部署，且只启动 Web 设置页，
+不会自动认证：
 
 ```bash
 sudo cp yulink-web.service /etc/systemd/system/

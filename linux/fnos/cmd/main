@@ -7,45 +7,118 @@ DATA="${TRIM_PKGVAR}"
 SOCK="${TRIM_APPDEST}/app.sock"
 PIDFILE="${TRIM_PKGVAR}/web.pid"
 LOGFILE="${TRIM_PKGVAR}/web.log"
+RUN_PIDFILE="${TRIM_PKGVAR}/run.pid"
+RUN_CHILD_PIDFILE="${TRIM_PKGVAR}/run.child.pid"
+RUNLOGFILE="${TRIM_PKGVAR}/run.log"
+CONFIG="${TRIM_PKGVAR}/config.json"
+SUPERVISOR="${TRIM_PKGVAR}/run-supervisor.sh"
 
 mkdir -p "${TRIM_PKGVAR}/logs"
 
-is_running() {
-    [ -f "${PIDFILE}" ] || return 1
-    PID="$(cat "${PIDFILE}" 2>/dev/null)"
-    [ -n "${PID}" ] && kill -0 "${PID}" 2>/dev/null
+pid_alive() {
+    local pf="$1"
+    local marker="${2:-}"
+    [ -f "${pf}" ] || return 1
+    local p
+    p="$(cat "${pf}" 2>/dev/null)"
+    [ -n "${p}" ] && kill -0 "${p}" 2>/dev/null || return 1
+    if [ -n "${marker}" ]; then
+        grep -qa "${marker}" "/proc/${p}/cmdline" 2>/dev/null || return 1
+    fi
+    return 0
 }
 
-start() {
-    if is_running; then
-        exit 0
+write_supervisor() {
+    cat > "${SUPERVISOR}" <<'SUP'
+#!/bin/bash
+set -u
+
+BIN="$1"
+DATA="$2"
+CFG="$3"
+CHILD_PIDFILE="$4"
+LOG="$5"
+
+while true; do
+    started="$(date +%s)"
+    "${BIN}" --data-dir "${DATA}" run >> /dev/null 2>> "${LOG}" &
+    child=$!
+    echo "${child}" > "${CHILD_PIDFILE}"
+    last="$(stat -c %Y "${CFG}" 2>/dev/null || echo 0)"
+    while kill -0 "${child}" 2>/dev/null; do
+        sleep 3
+        now="$(stat -c %Y "${CFG}" 2>/dev/null || echo "${last}")"
+        if [ "${now}" != "${last}" ]; then
+            kill "${child}" 2>/dev/null
+            wait "${child}" 2>/dev/null
+            break
+        fi
+    done
+    # 配置变更或异常退出后短暂等待；启动即失败时退避，避免刷日志
+    if [ $(( $(date +%s) - started )) -lt 5 ]; then
+        sleep 30
+    else
+        sleep 2
+    fi
+done
+SUP
+    chmod +x "${SUPERVISOR}"
+}
+
+start_web() {
+    if pid_alive "${PIDFILE}" "serve"; then
+        return 0
     fi
     rm -f "${SOCK}"
     nohup "${BIN}" --data-dir "${DATA}" serve \
         --www-dir "${WWW}" \
         --unix-socket "${SOCK}" >> "${LOGFILE}" 2>&1 &
     echo $! > "${PIDFILE}"
+}
+
+start_run() {
+    if pid_alive "${RUN_PIDFILE}" "run-supervisor"; then
+        return 0
+    fi
+    write_supervisor
+    nohup "${SUPERVISOR}" "${BIN}" "${DATA}" "${CONFIG}" "${RUN_CHILD_PIDFILE}" "${RUNLOGFILE}" >/dev/null 2>&1 &
+    echo $! > "${RUN_PIDFILE}"
+}
+
+start() {
+    start_web
+    start_run
     sleep 1
-    if is_running; then
+    if pid_alive "${PIDFILE}" "serve"; then
         exit 0
     fi
-    echo "YuLink Web 启动失败，请查看 ${LOGFILE}" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    echo "YuLink 启动失败，请查看 ${LOGFILE}" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
     exit 1
 }
 
-stop() {
-    if [ -f "${PIDFILE}" ]; then
-        PID="$(cat "${PIDFILE}" 2>/dev/null)"
-        if [ -n "${PID}" ] && kill -0 "${PID}" 2>/dev/null; then
-            kill "${PID}" 2>/dev/null || true
+stop_pidfile() {
+    local pf="$1"
+    local marker="${2:-}"
+    if [ -f "${pf}" ]; then
+        local p
+        p="$(cat "${pf}" 2>/dev/null)"
+        if [ -n "${p}" ] && kill -0 "${p}" 2>/dev/null \
+            && { [ -z "${marker}" ] || grep -qa "${marker}" "/proc/${p}/cmdline" 2>/dev/null; }; then
+            kill "${p}" 2>/dev/null || true
             for _ in 1 2 3 4 5; do
-                kill -0 "${PID}" 2>/dev/null || break
+                kill -0 "${p}" 2>/dev/null || break
                 sleep 1
             done
-            kill -9 "${PID}" 2>/dev/null || true
+            kill -9 "${p}" 2>/dev/null || true
         fi
-        rm -f "${PIDFILE}"
+        rm -f "${pf}"
     fi
+}
+
+stop() {
+    stop_pidfile "${RUN_PIDFILE}" "run-supervisor"
+    stop_pidfile "${RUN_CHILD_PIDFILE}" "run"
+    stop_pidfile "${PIDFILE}" "serve"
     rm -f "${SOCK}"
     exit 0
 }
@@ -53,6 +126,6 @@ stop() {
 case "$1" in
     start) start ;;
     stop) stop ;;
-    status) is_running && exit 0 || exit 3 ;;
+    status) pid_alive "${PIDFILE}" "serve" && exit 0 || exit 3 ;;
     *) exit 1 ;;
 esac
