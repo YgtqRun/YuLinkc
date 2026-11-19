@@ -113,6 +113,16 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve release notes
+        id: notes
+        run: |
+          FILE=".github/release-notes/${{ steps.meta.outputs.tag }}.md"
+          if [ ! -f "${FILE}" ]; then
+            echo "缺少更新日志: ${FILE}（请按 .github/release-notes/v1.1.0.md 的格式补充）" >&2
+            exit 1
+          fi
+          echo "file=${FILE}" >> "$GITHUB_OUTPUT"
+
       - name: Write version manifest
         run: |
           cat > "assets/version.json" <<EOF
@@ -123,5 +133,6 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: v${{ steps.meta.outputs.version }}
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.file }}
+          generate_release_notes: false
           files: assets/*
