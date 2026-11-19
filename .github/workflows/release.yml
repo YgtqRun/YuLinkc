@@ -62,17 +62,10 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-
-      - name: Install musl toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
 
       - name: Build Linux binary
         working-directory: linux
-        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+        run: cargo build --release --locked
 
       - name: Build web settings page
         run: |
@@ -85,11 +78,11 @@ jobs:
           mkdir -p build/fnos release-assets
           cp -a linux/fnos/. build/fnos/
           rm -f build/fnos/app/server/.gitkeep build/fnos/app/www/.gitkeep
-          cp linux/target/x86_64-unknown-linux-musl/release/yulink-linux build/fnos/app/server/yulink-linux
+          cp linux/target/release/yulink-linux build/fnos/app/server/yulink-linux
           cp -a dist-web/. build/fnos/app/www/
           chmod +x build/fnos/app/server/yulink-linux build/fnos/cmd/*
           tar -czf "release-assets/yulink_${VERSION}_x86.fpk" -C build/fnos .
-          cp linux/target/x86_64-unknown-linux-musl/release/yulink-linux release-assets/yulink-linux-x86_64
+          cp linux/target/release/yulink-linux release-assets/yulink-linux-x86_64
 
       - uses: actions/upload-artifact@v4
         with:

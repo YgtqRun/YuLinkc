@@ -36,19 +36,117 @@
 
 从 [Releases](https://github.com/YgtqRun/YuLinkc/releases) 下载 v1.1.0 产物：
 
-- `yulink_1.1.0_x64-setup.exe`（Windows NSIS 安装包，推荐）
-- `yulink_1.1.0_x64_en-US.msi`（Windows MSI）
-- `yulink.v1.1.0.exe`（Windows 免安装单文件）
-- `yulink-linux-x86_64`（Linux 静态二进制，适合 systemd / 容器）
-- `yulink_1.1.0_x86.fpk`（飞牛 OS 应用包，Web 设置页走统一网关）
+| 文件 | 平台 | 说明 |
+| --- | --- | --- |
+| `yulink_1.1.0_x64-setup.exe` | Windows | NSIS 安装包（推荐） |
+| `yulink_1.1.0_x64_en-US.msi` | Windows | MSI 安装包 |
+| `yulink.v1.1.0.exe` | Windows | 免安装单文件 |
+| `yulink-linux-x86_64` | Linux | x86_64 二进制（glibc，需要系统库） |
+| `yulink_1.1.0_x86.fpk` | 飞牛 OS | 应用中心安装包 |
 
-Windows 前置依赖：Windows 10/11 自带的 WebView2 Runtime（绝大多数系统已内置）。
+### Windows
 
-Linux / 飞牛 OS 版不依赖 WebView2 和 DPAPI，使用纯 HTTP 登录：
+前置依赖：Windows 10/11 自带的 WebView2 Runtime（绝大多数系统已内置）。
 
-- Linux 解压后运行 `yulink-linux init`，再运行 `serve` 即可打开 Web 设置页；
-- 飞牛 OS 在应用中心安装 FPK 后，从桌面图标或统一网关 `/app/yulink/` 打开；
-- 详细配置、systemd 与 Docker 用法见 [`linux/README.md`](linux/README.md)。
+- 安装包：运行 `yulink_1.1.0_x64-setup.exe` 或 `yulink_1.1.0_x64_en-US.msi`，
+  按提示安装后从开始菜单启动。
+- 免安装：直接运行 `yulink.v1.1.0.exe`，改名或移动目录后首次运行会自动修正开机自启路径。
+
+### Linux
+
+前提：x86_64 Linux，建议 Debian 12、Ubuntu 24.04 或更新版本（二进制为 glibc 动态链接）。
+Linux 版不依赖 WebView2 和 DPAPI，使用纯 HTTP 登录，也可以只跑命令行。
+
+1. 安装二进制：
+
+```bash
+chmod +x yulink-linux-x86_64
+sudo install -m 755 yulink-linux-x86_64 /usr/local/bin/yulink-linux
+```
+
+2. 初始化配置：
+
+```bash
+sudo mkdir -p /opt/yulink/data
+sudo yulink-linux --data-dir /opt/yulink/data init
+sudo nano /opt/yulink/data/config.json      # 填写 username / password
+sudo yulink-linux --data-dir /opt/yulink/data set-sms 140423 27
+```
+
+`set-sms` 的第二个参数是有效期（小时），`-1` 表示永久有效；修改动态密码后同样执行
+这条命令重新计时。
+
+3. 先手动验证：
+
+```bash
+sudo yulink-linux --data-dir /opt/yulink/data status   # 查询门户状态
+sudo yulink-linux --data-dir /opt/yulink/data once     # 离线则登录一次
+```
+
+4. 常驻运行（心跳 + 自动重登）：
+
+```bash
+sudo yulink-linux --data-dir /opt/yulink/data run
+```
+
+5. 开机自启（systemd）：
+
+```ini
+# /etc/systemd/system/yulink.service
+[Unit]
+Description=YuLink campus network client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/yulink-linux --data-dir /opt/yulink/data run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now yulink
+systemctl status yulink
+tail -f /opt/yulink/data/logs/yulink.log
+```
+
+可选 Web 设置页：`yulink-linux` 二进制本身不带前端文件，请从 FPK 的 `app/www`
+提取，或在源码目录执行 `npm run build:web` 生成，然后启动：
+
+```bash
+sudo yulink-linux --data-dir /opt/yulink/data serve \
+  --www-dir /opt/yulink/www --bind 0.0.0.0 --port 8080
+```
+
+浏览器打开 `http://<机器 IP>:8080/`。当前设置页没有登录保护，只建议在可信内网使用。
+
+### 飞牛 OS（fnOS）
+
+前提：x86_64 飞牛 OS 设备。FPK 已包含服务端二进制、Web 设置页和应用图标，安装后自动
+启动 `serve`（设置页）和 `run`（心跳 + 自动重登），不需要再手动点登录。
+
+1. 下载 `yulink_1.1.0_x86.fpk`。
+2. 打开飞牛「应用中心 → 手动安装」，选择该 FPK，安装到任意存储卷。
+3. 安装完成后，从桌面「御连 YuLink」图标打开，或在统一网关的 YuLink 入口
+   （路径 `/app/yulink/`）打开设置页。
+4. 在设置页填写账号、密码和动态密码，点「保存凭据」。设置页右上角可确认运行状态。
+5. 确认应用中心里该应用的「开机自启」为开启；之后 NAS 开机即会自动联网。
+
+日志位置（`<卷>` 为安装时选择的存储卷，通常为 `vol1`）：
+
+- 认证与心跳：`/<卷>/@appdata/yulink/logs/yulink.log`
+- Web 设置页：`/<卷>/@appdata/yulink/web.log`
+- 常驻进程：`/<卷>/@appdata/yulink/run.log`
+
+升级时下载新 FPK 后在同一位置再次手动安装覆盖即可，账号与动态密码等配置保存在
+`@appdata/yulink/config.json`，不会丢失。
+
+更多命令行、Docker 与联调说明见 [`linux/README.md`](linux/README.md)。
 
 ## 快速开始
 
@@ -147,14 +245,15 @@ Linux / 飞牛 OS 版：
 
 ```bash
 cd linux
-cargo build --release --target x86_64-unknown-linux-musl
+cargo build --release
 cd ..
 npm run build:web
 ```
 
-把 `linux/target/x86_64-unknown-linux-musl/release/yulink-linux` 与 `dist-web/`
-分别放入 FPK 的 `app/server/` 和 `app/www/`；标签发布时
-`.github/workflows/release.yml` 会自动完成这一步。
+把 `linux/target/release/yulink-linux` 与 `dist-web/` 分别放入 FPK 的
+`app/server/` 和 `app/www/`；标签发布时 `.github/workflows/release.yml`
+会自动完成这一步。默认构建依赖系统的 glibc；需要完全静态的二进制时，可自行安装
+musl 工具链后使用 `--target x86_64-unknown-linux-musl` 构建。
 
 > 注意：仓库不纳入本地联调素材（`docs/`、`scripts/`、`实现方案.md`、
 > `登录脚本.js`）。`mock/wired.html` 与 `mock/wireless.html` 是 POC/E2E 的

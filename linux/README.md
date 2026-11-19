@@ -24,7 +24,7 @@ cargo build --release
 
 Linux/fnOS 上可以直接在设备上编译；也可以把仓库推到 GitHub 后手动运行
 `linux-build` workflow，下载 `yulink-linux-x86_64` artifact。该 workflow
-使用 `x86_64-unknown-linux-musl` 静态链接，适合作为 FPK 的 `app/server`。
+使用系统 glibc 构建，产物适合作为 FPK 的 `app/server`。
 
 ## 配置
 
@@ -146,7 +146,7 @@ cd linux
 
 ## 发布产物
 
-- `yulink-linux-x86_64`：musl 静态链接二进制；
+- `yulink-linux-x86_64`：x86_64 二进制（glibc）；
 - `yulink_1.1.0_x86.fpk`：飞牛 OS 应用包（`app/server` + `app/www` +
   `cmd/main` + `manifest`，统一网关入口 `/app/yulink`）。
 
