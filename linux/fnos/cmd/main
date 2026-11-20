@@ -28,7 +28,16 @@ pid_alive() {
     return 0
 }
 
+ensure_writable() {
+    local f="$1"
+    if [ -e "${f}" ] && [ ! -w "${f}" ]; then
+        mv -f "${f}" "${f}.stale.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+    fi
+    touch "${f}" 2>/dev/null || true
+}
+
 write_supervisor() {
+    ensure_writable "${SUPERVISOR}"
     cat > "${SUPERVISOR}" <<'SUP'
 #!/bin/bash
 set -u
@@ -43,6 +52,7 @@ while true; do
     started="$(date +%s)"
     "${BIN}" --data-dir "${DATA}" run >> /dev/null 2>> "${LOG}" &
     child=$!
+    rm -f "${CHILD_PIDFILE}"
     echo "${child}" > "${CHILD_PIDFILE}"
     last="$(stat -c %Y "${CFG}" 2>/dev/null || echo 0)"
     while kill -0 "${child}" 2>/dev/null; do
@@ -70,6 +80,8 @@ start_web() {
         return 0
     fi
     rm -f "${SOCK}"
+    ensure_writable "${LOGFILE}"
+    rm -f "${PIDFILE}"
     nohup "${BIN}" --data-dir "${DATA}" serve \
         --www-dir "${WWW}" \
         --unix-socket "${SOCK}" >> "${LOGFILE}" 2>&1 &
@@ -81,6 +93,8 @@ start_run() {
         return 0
     fi
     write_supervisor
+    ensure_writable "${RUNLOGFILE}"
+    rm -f "${RUN_PIDFILE}" "${RUN_CHILD_PIDFILE}"
     nohup "${SUPERVISOR}" "${BIN}" "${DATA}" "${CONFIG}" "${RUN_CHILD_PIDFILE}" "${RUNLOGFILE}" >/dev/null 2>&1 &
     echo $! > "${RUN_PIDFILE}"
 }
